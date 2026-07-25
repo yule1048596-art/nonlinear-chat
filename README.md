@@ -114,21 +114,17 @@ npm test
 
 ## 部署
 
-站点挂在 GitHub Pages 上，源是 `gh-pages` 分支。重新发布：
+推送到 `main` 就会自动部署：[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) 装依赖 → 跑测试 → 构建 → 发布到 GitHub Pages。**测试不过就不部署。**
+
+`vite.config.ts` 里 `base: './'`，产出的是相对路径，所以挂在 `/nonlinear-chat/` 这种子路径下不需要额外配置。
+
+需要绕过 CI 手动发一版时（比如 Actions 挂了）：
 
 ```bash
 npm run deploy
 ```
 
-脚本会构建、把 `dist/` 推到 `gh-pages`，一两分钟后线上生效。
-
-仓库里还有一份 `.github/workflows/deploy.yml`，配置的是「推送到 main 就自动跑测试并部署」。要启用它得先给 CLI 令牌加 workflow 权限（GitHub 不允许 OAuth App 在没有这个权限时创建工作流文件）：
-
-```bash
-gh auth refresh -h github.com -s workflow
-```
-
-之后把工作流文件提交推送，再到仓库 Settings → Pages 把 Source 改成 GitHub Actions，`npm run deploy` 就可以不用了。
+这个脚本走的是老办法——把 `dist/` 推到 `gh-pages` 分支。注意用它之前得先到 Settings → Pages 把 Source 从 GitHub Actions 改回 `gh-pages` 分支，否则推了也不生效。
 
 ## 一些实现上的坑
 
