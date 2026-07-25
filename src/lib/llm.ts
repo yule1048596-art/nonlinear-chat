@@ -185,6 +185,7 @@ export async function listModels(profile: Pick<Profile, 'baseUrl' | 'apiKey'>): 
 }
 
 export const PRESETS: Array<{ name: string; baseUrl: string; model: string }> = [
+  { name: '小米 MiMo', baseUrl: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2.5-pro' },
   { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o' },
   { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
   { name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'anthropic/claude-sonnet-4.5' },

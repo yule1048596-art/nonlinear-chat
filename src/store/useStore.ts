@@ -9,10 +9,10 @@ const DEFAULT_SETTINGS: Settings = {
   profiles: [
     {
       id: 'default',
-      name: 'DeepSeek',
-      baseUrl: 'https://api.deepseek.com/v1',
-      apiKey: '',
-      model: 'deepseek-chat',
+      name: '小米 MiMo',
+      baseUrl: 'https://api.xiaomimimo.com/v1',
+      apiKey: '', // 只能由使用者自己在设置里填，任何情况下都不写进代码
+      model: 'mimo-v2.5-pro',
       temperature: 0.7,
     },
   ],
@@ -537,9 +537,9 @@ export const useStore = create<State>((set, get) => {
 export const newProfile = (): Profile => ({
   id: uid(),
   name: '新配置',
-  baseUrl: 'https://api.deepseek.com/v1',
+  baseUrl: '',
   apiKey: '',
-  model: 'deepseek-chat',
+  model: '',
   temperature: 0.7,
 });
 
