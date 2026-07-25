@@ -11,6 +11,13 @@ const ROLE_LABEL: Record<NodeRole, string> = {
   note: '批注',
 };
 
+const PLACEHOLDER: Record<NodeRole, string> = {
+  user: '问点什么…',
+  system: '作为 system 提示注入下游所有分支',
+  note: '画布批注，默认不进入上下文',
+  assistant: '',
+};
+
 function AutoTextarea({
   value,
   placeholder,
@@ -28,7 +35,7 @@ function AutoTextarea({
     const el = ref.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 420)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, 400)}px`;
   }, [value]);
 
   return (
@@ -85,7 +92,7 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
 
   if (!node) return null;
 
-  const inContext = (data as { inContext?: boolean })?.inContext;
+  const { inContext, dimmed } = (data ?? {}) as { inContext?: boolean; dimmed?: boolean };
   const isText = node.role !== 'assistant';
   const collapsed = node.collapsed;
 
@@ -94,6 +101,7 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
     `node-${node.role}`,
     selected ? 'is-selected' : '',
     inContext ? 'in-context' : '',
+    dimmed ? 'is-dimmed' : '',
     streaming ? 'is-streaming' : '',
     node.status === 'error' ? 'is-error' : '',
   ]
@@ -105,22 +113,27 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
       <Handle type="target" position={Position.Top} className="handle" />
 
       <header className="node-head">
+        <span className="role-dot" />
         <span className="role-badge">{ROLE_LABEL[node.role]}</span>
-        {node.role === 'assistant' && node.model && <span className="node-model">{node.model}</span>}
         {streaming && <span className="pulse" title="生成中" />}
         <span className="spacer" />
-        {node.usage?.completion != null && (
-          <span className="node-meta" title="prompt / completion tokens">
-            {node.usage.prompt ?? '?'}→{node.usage.completion}
-          </span>
-        )}
-        <button
-          className="icon-btn"
-          title={collapsed ? '展开' : '折叠'}
-          onClick={() => updateNode(id, { collapsed: !collapsed })}
-        >
-          {collapsed ? '▸' : '▾'}
-        </button>
+        <span className="node-meta-group">
+          {node.role === 'assistant' && node.model && (
+            <span className="node-model">{node.model}</span>
+          )}
+          {node.usage?.completion != null && (
+            <span className="node-tokens" title="prompt → completion tokens">
+              {node.usage.prompt ?? '?'}→{node.usage.completion}
+            </span>
+          )}
+          <button
+            className="icon-btn"
+            title={collapsed ? '展开' : '折叠'}
+            onClick={() => updateNode(id, { collapsed: !collapsed })}
+          >
+            {collapsed ? '▸' : '▾'}
+          </button>
+        </span>
       </header>
 
       {collapsed ? (
@@ -132,13 +145,7 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
           {isText ? (
             <AutoTextarea
               value={node.content}
-              placeholder={
-                node.role === 'user'
-                  ? '问点什么…  ⌘/Ctrl + Enter 发送'
-                  : node.role === 'system'
-                    ? '这条会作为 system 提示注入下游所有分支'
-                    : '画布批注，默认不进入上下文'
-              }
+              placeholder={PLACEHOLDER[node.role]}
               onChange={(v) => updateNode(id, { content: v })}
               onSubmit={node.role === 'user' ? () => void send(id) : undefined}
             />
@@ -147,7 +154,7 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
               {node.reasoning && (
                 <div className="reasoning">
                   <button className="reasoning-toggle" onClick={() => setShowReasoning((v) => !v)}>
-                    {showReasoning ? '▾' : '▸'} 思考过程（{node.reasoning.length} 字）
+                    {showReasoning ? '▾' : '▸'} 思考过程 · {node.reasoning.length} 字
                   </button>
                   {showReasoning && <pre className="reasoning-body">{node.reasoning}</pre>}
                 </div>
@@ -155,7 +162,7 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
               {node.content ? (
                 <Markdown>{node.content}</Markdown>
               ) : (
-                <div className="node-placeholder">{streaming ? '正在生成…' : '（还没有内容）'}</div>
+                <div className="node-placeholder">{streaming ? '正在生成…' : '还没有内容'}</div>
               )}
             </>
           )}
@@ -165,18 +172,23 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
 
       <footer className="node-actions nodrag">
         {node.role === 'user' && (
-          <button className="btn primary" onClick={() => void send(id)} disabled={streaming}>
+          <button
+            className="btn primary"
+            onClick={() => void send(id)}
+            disabled={streaming}
+            title="⌘/Ctrl + Enter"
+          >
             发送
           </button>
         )}
         {node.role === 'assistant' &&
           (streaming ? (
-            <button className="btn" onClick={() => stop(id)}>
+            <button className="btn solid" onClick={() => stop(id)}>
               停止
             </button>
           ) : (
             <>
-              <button className="btn primary" onClick={() => addChild(id, 'user')}>
+              <button className="btn solid" onClick={() => addChild(id, 'user')}>
                 追问
               </button>
               <button className="btn" onClick={() => void regenerate(id)} title="就地重新生成">
@@ -187,13 +199,13 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
                 onClick={() => void branchRegenerate(id)}
                 title="保留这个回答，在旁边并排生成另一个版本"
               >
-                并排重生
+                并排
               </button>
             </>
           ))}
         {node.role !== 'assistant' && (
           <button className="btn" onClick={() => addChild(id, 'user')} title="接一个新的提问节点">
-            +分支
+            分支
           </button>
         )}
         {node.role === 'note' && (

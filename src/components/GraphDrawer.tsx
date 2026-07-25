@@ -36,7 +36,7 @@ export function GraphDrawer({ open, onClose }: { open: boolean; onClose: () => v
           </button>
         </header>
         <button
-          className="btn primary block"
+          className="btn solid block"
           onClick={() => {
             void newGraph();
             onClose();

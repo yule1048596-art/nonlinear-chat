@@ -1,12 +1,17 @@
 import { useRef } from 'react';
 import { useStore } from '../store/useStore';
 import type { Graph } from '../types';
+import { MODE_ICON, MODE_LABEL, type ThemeMode } from '../lib/theme';
 
 export function Toolbar({
+  themeMode,
+  onCycleTheme,
   onOpenGraphs,
   onOpenSettings,
   onToast,
 }: {
+  themeMode: ThemeMode;
+  onCycleTheme: () => void;
   onOpenGraphs: () => void;
   onOpenSettings: () => void;
   onToast: (msg: string) => void;
@@ -53,9 +58,16 @@ export function Toolbar({
         <span className="brand-name">Nexus</span>
       </div>
 
-      <button className="btn ghost" onClick={onOpenGraphs} title="所有画布">
-        ☰ 画布
-      </button>
+      <div className="toolbar-group">
+        <button className="btn" onClick={onOpenGraphs} title="所有画布">
+          画布
+        </button>
+        <button className="btn" onClick={() => void newGraph()} title="新建画布">
+          新建
+        </button>
+      </div>
+
+      <span className="toolbar-sep" />
 
       <input
         className="title-input"
@@ -81,29 +93,33 @@ export function Toolbar({
 
       {!activeProfile?.apiKey && (
         <button className="btn warn" onClick={onOpenSettings}>
-          ⚠ 未配置 Key
+          未配置 Key
         </button>
       )}
 
-      <button className="btn ghost" onClick={() => void newGraph()}>
-        + 新画布
-      </button>
-      <button className="btn ghost" onClick={exportGraph} title="导出为 JSON">
-        导出
-      </button>
-      <button className="btn ghost" onClick={() => fileRef.current?.click()} title="从 JSON 导入">
-        导入
-      </button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="application/json,.json"
-        hidden
-        onChange={(e) => void onFile(e.target.files?.[0])}
-      />
-      <button className="btn ghost" onClick={onOpenSettings}>
-        设置
-      </button>
+      <span className="toolbar-sep" />
+
+      <div className="toolbar-group">
+        <button className="icon-btn" onClick={exportGraph} title="导出为 JSON">
+          ↓
+        </button>
+        <button className="icon-btn" onClick={() => fileRef.current?.click()} title="从 JSON 导入">
+          ↑
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json,.json"
+          hidden
+          onChange={(e) => void onFile(e.target.files?.[0])}
+        />
+        <button className="icon-btn" onClick={onCycleTheme} title={`主题：${MODE_LABEL[themeMode]}`}>
+          {MODE_ICON[themeMode]}
+        </button>
+        <button className="btn" onClick={onOpenSettings}>
+          设置
+        </button>
+      </div>
     </header>
   );
 }

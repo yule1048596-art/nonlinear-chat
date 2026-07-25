@@ -97,7 +97,8 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
                 ))}
               </select>
               <button
-                className="btn"
+                className="btn solid"
+                title="新增一套配置"
                 onClick={() => {
                   const created = newProfile();
                   upsertProfile(created);
