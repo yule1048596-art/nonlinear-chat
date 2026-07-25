@@ -15,7 +15,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useStore } from '../store/useStore';
-import { collectAncestors } from '../lib/context';
+import { collectAncestors, collectDescendants, computeHidden } from '../lib/context';
 import { toast } from '../lib/toast';
 import { ContextMenu, type MenuAnchor, type MenuItem } from './ContextMenu';
 import { MessageNode } from './MessageNode';
@@ -49,6 +49,24 @@ export function Canvas() {
   // 拉线过程中把所有节点的连接点都显出来，否则得靠猜往哪儿放
   useEffect(() => () => document.body.classList.remove('is-connecting'), []);
 
+  /** 被折叠子树藏起来的节点 */
+  const hidden = useMemo(() => (nodes ? computeHidden(nodes) : new Set<string>()), [nodes]);
+
+  /** 每个折叠节点藏了多少东西，显示在徽章上，否则用户不知道下面还有内容 */
+  const hiddenCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (!nodes || hidden.size === 0) return counts;
+    for (const node of Object.values(nodes)) {
+      if (!node.subtreeCollapsed) continue;
+      let n = 0;
+      for (const id of collectDescendants(nodes, node.id)) {
+        if (id !== node.id && hidden.has(id)) n++;
+      }
+      counts.set(node.id, n);
+    }
+    return counts;
+  }, [nodes, hidden]);
+
   /** 选中节点的全部祖先 —— 也就是「这一次发送真正会带上的上下文」 */
   const contextSet = useMemo(() => {
     if (!nodes || !selectedId || !nodes[selectedId]) return new Set<string>();
@@ -76,6 +94,8 @@ export function Canvas() {
       // 没有选中时整张画布保持正常，否则平时看什么都是灰的。
       const dimmed = hasSelection && !contextSet.has(node.id);
       const measured = dimsRef.current.get(node.id);
+      const isHidden = hidden.has(node.id);
+      const hiddenCount = hiddenCounts.get(node.id) ?? 0;
       const prev = cache.get(node.id);
       if (
         prev &&
@@ -83,8 +103,10 @@ export function Canvas() {
         prev.position.y === node.position.y &&
         prev.selected === isSelected &&
         prev.measured === measured &&
+        prev.hidden === isHidden &&
         (prev.data as { inContext: boolean }).inContext === inContext &&
-        (prev.data as { dimmed: boolean }).dimmed === dimmed
+        (prev.data as { dimmed: boolean }).dimmed === dimmed &&
+        (prev.data as { hiddenCount: number }).hiddenCount === hiddenCount
       ) {
         out.push(prev);
         continue;
@@ -95,14 +117,15 @@ export function Canvas() {
         position: node.position,
         selected: isSelected,
         measured,
-        data: { inContext, dimmed },
+        hidden: isHidden,
+        data: { inContext, dimmed, hiddenCount },
       };
       cache.set(node.id, next);
       out.push(next);
     }
     for (const key of [...cache.keys()]) if (!alive.has(key)) cache.delete(key);
     return out;
-  }, [nodes, selectedId, contextSet, dimsVersion]);
+  }, [nodes, selectedId, contextSet, dimsVersion, hidden, hiddenCounts]);
 
   const rfEdges = useMemo<Edge[]>(() => {
     if (!nodes) return [];
@@ -116,8 +139,10 @@ export function Canvas() {
         const id = `${parentId}->${node.id}`;
         alive.add(id);
         const active = contextSet.has(parentId) && contextSet.has(node.id);
+        // 只要有一端被折叠藏起来，这条边就没有意义了
+        const isHidden = hidden.has(parentId) || hidden.has(node.id);
         const prev = cache.get(id);
-        if (prev && prev.animated === active) {
+        if (prev && prev.animated === active && prev.hidden === isHidden) {
           out.push(prev);
           continue;
         }
@@ -127,6 +152,7 @@ export function Canvas() {
           target: node.id,
           type: 'smoothstep',
           animated: active,
+          hidden: isHidden,
           className: active ? 'edge-active' : '',
           markerEnd: EDGE_MARKER,
         };
@@ -136,7 +162,7 @@ export function Canvas() {
     }
     for (const key of [...cache.keys()]) if (!alive.has(key)) cache.delete(key);
     return out;
-  }, [nodes, contextSet]);
+  }, [nodes, contextSet, hidden]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {

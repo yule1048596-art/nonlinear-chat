@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { useReactFlow } from '@xyflow/react';
 import { useStore } from '../store/useStore';
 import type { Graph } from '../types';
 import { MODE_ICON, MODE_LABEL, type ThemeMode } from '../lib/theme';
@@ -9,11 +10,13 @@ export function Toolbar({
   onCycleTheme,
   onOpenGraphs,
   onOpenSettings,
+  onOpenSearch,
 }: {
   themeMode: ThemeMode;
   onCycleTheme: () => void;
   onOpenGraphs: () => void;
   onOpenSettings: () => void;
+  onOpenSearch: () => void;
 }) {
   const graph = useStore((s) => s.graph);
   const renameGraph = useStore((s) => s.renameGraph);
@@ -21,6 +24,8 @@ export function Toolbar({
   const importGraph = useStore((s) => s.importGraph);
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
+  const applyLayout = useStore((s) => s.applyLayout);
+  const { getNodes, fitView } = useReactFlow();
   const fileRef = useRef<HTMLInputElement>(null);
 
   // 画布上可以同时跑多个分支，但正在生成的节点可能在视野外，这里给个总数
@@ -53,6 +58,25 @@ export function Toolbar({
     }
   };
 
+  const tidy = () => {
+    /*
+     * 节点尺寸直接从 React Flow 的节点对象上取。Canvas 修小地图时已经把
+     * dimensions 变更写回了 measured，这里正好复用，不用再测一遍。
+     */
+    const dimensions = new Map<string, { width: number; height: number }>();
+    for (const n of getNodes()) {
+      if (n.measured?.width && n.measured?.height) {
+        dimensions.set(n.id, { width: n.measured.width, height: n.measured.height });
+      }
+    }
+    if (applyLayout(dimensions)) {
+      void fitView({ duration: 400, padding: 0.15 });
+      toast('已整理 · ⌘Z 撤销');
+    } else {
+      toast('已经是整齐的了');
+    }
+  };
+
   const activeProfile = settings.profiles.find((p) => p.id === settings.activeProfileId);
 
   return (
@@ -68,6 +92,12 @@ export function Toolbar({
         </button>
         <button className="btn" onClick={() => void newGraph()} title="新建画布">
           新建
+        </button>
+        <button className="btn" onClick={onOpenSearch} title="搜索节点内容　⌘/Ctrl + K">
+          搜索
+        </button>
+        <button className="btn" onClick={tidy} title="按分层自动排版，可撤销">
+          整理
         </button>
       </div>
 

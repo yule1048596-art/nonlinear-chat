@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildContext, collectDescendants, topoOrder, wouldCreateCycle } from './context';
+import {
+  buildContext,
+  collectDescendants,
+  computeHidden,
+  topoOrder,
+  wouldCreateCycle,
+} from './context';
 import type { ChatNode, NodeRole } from '../types';
 
 let clock = 0;
@@ -152,6 +158,72 @@ describe('wouldCreateCycle', () => {
   it('放行合法的新连线', () => {
     expect(wouldCreateCycle(g, 'loose', 'c')).toBe(false);
     expect(wouldCreateCycle(g, 'a', 'loose')).toBe(false);
+  });
+});
+
+describe('computeHidden', () => {
+  const collapse = (n: ChatNode) => {
+    n.subtreeCollapsed = true;
+    return n;
+  };
+
+  it('没有折叠时什么都不藏', () => {
+    const g = graph(node('a', 'user', 'a'), node('b', 'assistant', 'b', ['a']));
+    expect([...computeHidden(g)]).toEqual([]);
+  });
+
+  it('折叠节点自身可见，后代被隐藏', () => {
+    const g = graph(
+      node('root', 'user', 'root'),
+      collapse(node('x', 'assistant', 'x', ['root'])),
+      node('y', 'user', 'y', ['x']),
+      node('z', 'user', 'z', ['y']),
+    );
+    const hidden = computeHidden(g);
+    expect(hidden.has('x')).toBe(false);
+    expect([...hidden].sort()).toEqual(['y', 'z']);
+  });
+
+  /**
+   * 这条是整个函数存在的理由：汇合节点同时挂在被折叠的分支和可见分支下面。
+   * 天真的「隐藏所有后代」写法会把它错误地藏掉，等于吞掉一条可见路径的终点。
+   */
+  it('菱形结构：汇合节点只要还有一条未折叠的来路就保持可见', () => {
+    const g = graph(
+      node('root', 'user', 'root'),
+      collapse(node('left', 'assistant', '左（已折叠）', ['root'])),
+      node('right', 'assistant', '右', ['root']),
+      node('join', 'user', '汇合', ['left', 'right']),
+      node('after', 'assistant', '汇合之后', ['join']),
+    );
+    const hidden = computeHidden(g);
+    expect(hidden.has('join')).toBe(false);
+    expect(hidden.has('after')).toBe(false);
+    expect([...hidden]).toEqual([]);
+  });
+
+  it('菱形结构：两条来路都折叠了，汇合节点才隐藏', () => {
+    const g = graph(
+      node('root', 'user', 'root'),
+      collapse(node('left', 'assistant', '左', ['root'])),
+      collapse(node('right', 'assistant', '右', ['root'])),
+      node('join', 'user', '汇合', ['left', 'right']),
+    );
+    expect([...computeHidden(g)]).toEqual(['join']);
+  });
+
+  it('嵌套折叠不会互相干扰', () => {
+    const g = graph(
+      collapse(node('a', 'user', 'a')),
+      collapse(node('b', 'assistant', 'b', ['a'])),
+      node('c', 'user', 'c', ['b']),
+    );
+    expect([...computeHidden(g)].sort()).toEqual(['b', 'c']);
+  });
+
+  it('父节点已被删除的悬空节点当成根，不会凭空消失', () => {
+    const g = graph(node('orphan', 'user', '父节点已删除', ['gone']));
+    expect([...computeHidden(g)]).toEqual([]);
   });
 });
 

@@ -4,6 +4,7 @@ import { buildContext, collectDescendants, wouldCreateCycle, type NodeMap } from
 import { emptyHistory, record, redo as redoStep, undo as undoStep, type StepResult } from '../lib/history';
 import { LlmError, streamChat } from '../lib/llm';
 import { placeChild, placeSibling } from '../lib/layout';
+import { computeLayout, isSameLayout } from '../lib/autoLayout';
 import * as db from '../lib/db';
 
 const DEFAULT_SETTINGS: Settings = {
@@ -89,6 +90,8 @@ interface State {
   addRootNode: (role: NodeRole, position: { x: number; y: number }) => string | null;
   linkNodes: (from: string, to: string) => string | null;
   unlinkNodes: (from: string, to: string) => void;
+  /** 一键整理布局。传入实测节点尺寸，返回是否真的动了 */
+  applyLayout: (dimensions?: Map<string, { width: number; height: number }>) => boolean;
 
   send: (userNodeId: string) => Promise<void>;
   regenerate: (assistantId: string) => Promise<void>;
@@ -531,6 +534,26 @@ export const useStore = create<State>((set, get) => {
       );
       set({ selectedId: id });
       return id;
+    },
+
+    applyLayout(dimensions) {
+      const graph = get().graph;
+      if (!graph || Object.keys(graph.nodes).length === 0) return false;
+
+      const positions = computeLayout(graph.nodes, { dimensions });
+      // 已经是整齐的就别白占一条撤销记录
+      if (isSameLayout(graph.nodes, positions)) return false;
+
+      commit(
+        (nodes) => {
+          for (const [id, position] of Object.entries(positions)) {
+            const node = nodes[id];
+            if (node) nodes[id] = { ...node, position };
+          }
+        },
+        { label: '整理布局' },
+      );
+      return true;
     },
 
     /** 返回 null 表示成功，否则返回拒绝原因 */

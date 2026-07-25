@@ -13,6 +13,7 @@
     "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.0.0",
     "@xyflow/react": "^12.4.4",
     "idb": "^8.0.1",
     "react": "^19.0.0",

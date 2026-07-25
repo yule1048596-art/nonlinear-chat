@@ -389,6 +389,17 @@ kbd {
   cursor: default;
 }
 
+/* 「整理」重排时让节点滑过去，而不是瞬移——不然看不出发生了什么。
+   拖拽中的节点必须排除，否则会跟不上鼠标。 */
+.react-flow__node {
+  transition: transform 0.32s var(--ease);
+}
+
+.react-flow__node.dragging,
+body.is-connecting .react-flow__node {
+  transition: none;
+}
+
 .react-flow__background circle {
   fill: var(--dots);
 }
@@ -1373,6 +1384,150 @@ body.is-connecting .handle {
   margin-left: auto;
   font-size: 10.5px;
   color: var(--text-3);
+}
+
+/* ============================================================
+   搜索面板
+   ============================================================ */
+
+.palette {
+  position: fixed;
+  top: 14vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(620px, calc(100vw - 32px));
+  max-height: 62vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-3);
+  z-index: 50;
+  overflow: hidden;
+  animation: palette-in 0.16s var(--ease);
+}
+
+@keyframes palette-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+}
+
+.palette-input {
+  width: 100%;
+  padding: 15px 18px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+}
+
+.palette-input::placeholder {
+  color: var(--text-3);
+}
+
+.palette-count {
+  padding: 8px 18px 4px;
+  font-size: 10.5px;
+  color: var(--text-3);
+  letter-spacing: 0.04em;
+}
+
+.palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 6px 6px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.palette-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 8px 11px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.palette-list li.active {
+  background: var(--surface-2);
+}
+
+.palette-role {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+
+.palette-role.role-user {
+  color: var(--user);
+}
+.palette-role.role-assistant {
+  color: var(--assistant);
+}
+.palette-role.role-system {
+  color: var(--system);
+}
+.palette-role.role-note {
+  color: var(--note);
+}
+
+.palette-excerpt {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.palette-excerpt mark {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--text);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.palette-foot {
+  display: flex;
+  gap: 16px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+/* 折叠徽章：常驻可见，因为它说明的是「下面还有内容」这个当前状态 */
+.subtree-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--accent);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s;
+}
+
+.subtree-badge:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .streaming-badge {

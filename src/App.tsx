@@ -9,6 +9,7 @@ import { Canvas } from './components/Canvas';
 import { Toolbar } from './components/Toolbar';
 import { GraphDrawer } from './components/GraphDrawer';
 import { SettingsPanel } from './components/SettingsPanel';
+import { SearchPalette } from './components/SearchPalette';
 
 /** 选中节点时告诉用户「这一发到底会带多少上下文」—— 非线性对话最容易失控的就是这个 */
 function ContextBar() {
@@ -80,6 +81,7 @@ export default function App() {
   const redo = useStore((s) => s.redo);
   const [graphsOpen, setGraphsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -111,7 +113,13 @@ export default function App() {
         setSettingsOpen(false);
         return;
       }
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+        return;
+      }
+      if (e.key.toLowerCase() !== 'z') return;
       // 全局拦截，textarea 里也走我们自己的撤销：受控输入上浏览器原生撤销
       // 行为不可靠（React 每次都会把 value 覆盖回去）。文本粒度靠 coalesce 保证。
       e.preventDefault();
@@ -126,23 +134,25 @@ export default function App() {
   if (!ready) return <div className="boot">正在打开画布…</div>;
 
   return (
-    <div className="app">
-      <Toolbar
-        themeMode={themeMode}
-        onCycleTheme={() => setThemeMode((m) => NEXT_MODE[m])}
-        onOpenGraphs={() => setGraphsOpen(true)}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
-      <main className="canvas-wrap">
-        <ReactFlowProvider>
+    <ReactFlowProvider>
+      <div className="app">
+        <Toolbar
+          themeMode={themeMode}
+          onCycleTheme={() => setThemeMode((m) => NEXT_MODE[m])}
+          onOpenGraphs={() => setGraphsOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSearch={() => setSearchOpen(true)}
+        />
+        <main className="canvas-wrap">
           <Canvas />
-        </ReactFlowProvider>
-        <EmptyHint />
-        <ContextBar />
-      </main>
-      <GraphDrawer open={graphsOpen} onClose={() => setGraphsOpen(false)} />
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      {toastMsg && <div className="toast">{toastMsg}</div>}
-    </div>
+          <EmptyHint />
+          <ContextBar />
+        </main>
+        <GraphDrawer open={graphsOpen} onClose={() => setGraphsOpen(false)} />
+        <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+        <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
+        {toastMsg && <div className="toast">{toastMsg}</div>}
+      </div>
+    </ReactFlowProvider>
   );
 }

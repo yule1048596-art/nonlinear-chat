@@ -162,6 +162,50 @@ export function wouldCreateCycle(nodes: NodeMap, from: string, to: string): bool
   return collectAncestors(nodes, from).has(to);
 }
 
+/**
+ * 算出哪些节点应该被折叠隐藏。
+ *
+ * DAG 下不能简单地「隐藏折叠节点的所有后代」：一个汇合节点可能同时挂在
+ * 被折叠的分支和另一条可见分支下面，把它藏掉就等于凭空吞掉了一条可见路径
+ * 的终点。
+ *
+ * 正确规则是从根节点往下传播可见性：
+ *   - 没有父节点的节点始终可见
+ *   - 其余节点可见，当且仅当它至少有一个「可见且未折叠」的父节点
+ *   - 折叠节点自身可见，但可见性不经由它传递下去
+ *
+ * 于是汇合节点只要还有一条没被折叠的来路，就仍然可见。O(V+E)。
+ */
+export function computeHidden(nodes: NodeMap): Set<string> {
+  const childrenOf = buildChildIndex(nodes);
+  const visible = new Set<string>();
+  const queue: string[] = [];
+
+  for (const node of Object.values(nodes)) {
+    // 父节点可能已被删除，这种悬空引用要当成根处理，否则整条分支会凭空消失
+    const liveParents = node.parentIds.filter((p) => nodes[p]);
+    if (liveParents.length === 0) {
+      visible.add(node.id);
+      queue.push(node.id);
+    }
+  }
+
+  while (queue.length) {
+    const id = queue.shift()!;
+    const node = nodes[id];
+    if (!node || node.subtreeCollapsed) continue; // 折叠节点不再往下传播可见性
+    for (const childId of childrenOf.get(id) ?? []) {
+      if (visible.has(childId)) continue;
+      visible.add(childId);
+      queue.push(childId);
+    }
+  }
+
+  const hidden = new Set<string>();
+  for (const id of Object.keys(nodes)) if (!visible.has(id)) hidden.add(id);
+  return hidden;
+}
+
 /** 给节点算个深度，纯粹给自动布局用（多父取最深的那条路径） */
 export function depthOf(nodes: NodeMap, id: string, memo = new Map<string, number>()): number {
   const cached = memo.get(id);

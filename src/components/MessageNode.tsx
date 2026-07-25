@@ -86,6 +86,10 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const streaming = node?.status === 'streaming';
+  // 没有下游就不必显示折叠开关
+  const hasChildren = useStore((s) =>
+    Object.values(s.graph?.nodes ?? {}).some((n) => n.parentIds.includes(id)),
+  );
 
   // 流式输出时把视野钉在底部，除非用户自己往上滚了
   useEffect(() => {
@@ -105,7 +109,11 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
 
   if (!node) return null;
 
-  const { inContext, dimmed } = (data ?? {}) as { inContext?: boolean; dimmed?: boolean };
+  const { inContext, dimmed, hiddenCount = 0 } = (data ?? {}) as {
+    inContext?: boolean;
+    dimmed?: boolean;
+    hiddenCount?: number;
+  };
   const isText = node.role !== 'assistant';
   const collapsed = node.collapsed;
 
@@ -143,6 +151,16 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
           </button>
         )}
         {streaming && <span className="pulse" title="生成中" />}
+        {/* 折叠徽章不随悬停隐藏：它是当前状态的说明，藏起来用户就不知道下面还有东西 */}
+        {node.subtreeCollapsed && (
+          <button
+            className="subtree-badge"
+            title="展开下游分支"
+            onClick={() => updateNode(id, { subtreeCollapsed: false })}
+          >
+            ▸ {hiddenCount > 0 ? `${hiddenCount} 个节点` : '已折叠'}
+          </button>
+        )}
         <span className="spacer" />
         <span className="node-meta-group">
           {node.role === 'assistant' && node.model && (
@@ -246,6 +264,15 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
           </label>
         )}
         <span className="spacer" />
+        {hasChildren && (
+          <button
+            className="icon-btn"
+            title={node.subtreeCollapsed ? '展开下游分支' : '折叠下游分支'}
+            onClick={() => updateNode(id, { subtreeCollapsed: !node.subtreeCollapsed })}
+          >
+            {node.subtreeCollapsed ? '⊞' : '⊟'}
+          </button>
+        )}
         {node.content && (
           <button className="icon-btn" title="复制内容" onClick={copy}>
             {copied ? '✓' : '⧉'}

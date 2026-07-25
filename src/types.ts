@@ -18,6 +18,8 @@ export interface ChatNode {
   updatedAt: number;
   /** 折叠后节点只显示首行摘要，长回答不会把画布撑爆 */
   collapsed?: boolean;
+  /** 折叠整棵下游子树。与 collapsed 是两回事：那个只收起本节点的正文 */
+  subtreeCollapsed?: boolean;
   /** note 节点默认不进上下文；把它设为 true 可以让批注参与对话 */
   includeInContext?: boolean;
   /** 生成这条消息用的配置档，便于在不同分支上对比模型 */
