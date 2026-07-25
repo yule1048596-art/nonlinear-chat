@@ -10,10 +10,15 @@ permissions:
   pages: write
   id-token: write
 
-# 同一时间只跑一个部署；新的推送直接取消排队中的旧任务
+# 同一时间只跑一个部署。
+#
+# cancel-in-progress 必须是 false：在 Pages 真正发布的中途把任务掐掉，
+# GitHub 那边会卡在 updating_pages 状态出不来，导致下一次 deploy 一直
+# 轮询到超时报错——内容其实已经上线了，但工作流是红的。
+# 排队中的任务仍会被跳过，只有正在发布的不打断。
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
