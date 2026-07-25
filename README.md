@@ -2,6 +2,10 @@
 
 一个把 AI 对话从「一条时间线」变成「一张有向无环图」的聊天工具。纯前端，自带 API Key，数据全部留在本地浏览器。
 
+**在线试用 → https://yule1048596-art.github.io/nonlinear-chat/**
+
+站点不含任何密钥，打开后需要在设置里填自己的 API Key，Key 和对话都只存在你自己的浏览器里。
+
 ## 为什么
 
 主流 AI 聊天软件都是线性的，于是有四个绕不开的毛病：
@@ -107,6 +111,24 @@ npm test
 ```
 
 测试覆盖 DAG 的拓扑排序、多父合并、菱形去重、成环检测、上下文裁剪。
+
+## 部署
+
+站点挂在 GitHub Pages 上，源是 `gh-pages` 分支。重新发布：
+
+```bash
+npm run deploy
+```
+
+脚本会构建、把 `dist/` 推到 `gh-pages`，一两分钟后线上生效。
+
+仓库里还有一份 `.github/workflows/deploy.yml`，配置的是「推送到 main 就自动跑测试并部署」。要启用它得先给 CLI 令牌加 workflow 权限（GitHub 不允许 OAuth App 在没有这个权限时创建工作流文件）：
+
+```bash
+gh auth refresh -h github.com -s workflow
+```
+
+之后把工作流文件提交推送，再到仓库 Settings → Pages 把 Source 改成 GitHub Actions，`npm run deploy` 就可以不用了。
 
 ## 一些实现上的坑
 
