@@ -16,13 +16,15 @@ import {
 import '@xyflow/react/dist/style.css';
 import { useStore } from '../store/useStore';
 import { collectAncestors } from '../lib/context';
+import { toast } from '../lib/toast';
+import { ContextMenu, type MenuAnchor, type MenuItem } from './ContextMenu';
 import { MessageNode } from './MessageNode';
 
 const nodeTypes: NodeTypes = { message: MessageNode };
 
 const EDGE_MARKER = { type: MarkerType.ArrowClosed, width: 14, height: 14 } as const;
 
-export function Canvas({ onToast }: { onToast: (msg: string) => void }) {
+export function Canvas() {
   const nodes = useStore((s) => s.graph?.nodes);
   const selectedId = useStore((s) => s.selectedId);
   const select = useStore((s) => s.select);
@@ -42,6 +44,7 @@ export function Canvas({ onToast }: { onToast: (msg: string) => void }) {
    */
   const dimsRef = useRef(new Map<string, { width: number; height: number }>());
   const [dimsVersion, setDimsVersion] = useState(0);
+  const [menu, setMenu] = useState<{ anchor: MenuAnchor; items: MenuItem[] } | null>(null);
 
   // 拉线过程中把所有节点的连接点都显出来，否则得靠猜往哪儿放
   useEffect(() => () => document.body.classList.remove('is-connecting'), []);
@@ -161,10 +164,10 @@ export function Canvas({ onToast }: { onToast: (msg: string) => void }) {
     (conn: Connection) => {
       if (!conn.source || !conn.target) return;
       const rejection = linkNodes(conn.source, conn.target);
-      if (rejection) onToast(rejection);
-      else onToast('已连接 —— 这条分支的内容会一并进入下游上下文');
+      if (rejection) toast(rejection);
+      else toast('已连接 —— 这条分支的内容会一并进入下游上下文');
     },
-    [linkNodes, onToast],
+    [linkNodes],
   );
 
   const onEdgesDelete = useCallback(
@@ -181,41 +184,75 @@ export function Canvas({ onToast }: { onToast: (msg: string) => void }) {
       if (!target.classList.contains('react-flow__pane')) return;
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
       addRootNode('user', { x: position.x - 190, y: position.y - 40 });
-      onToast('新建了一个游离节点，拖它顶部的圆点可以接到任意节点下面');
+      toast('新建了一个游离节点，拖它顶部的圆点可以接到任意节点下面');
     },
-    [addRootNode, screenToFlowPosition, onToast],
+    [addRootNode, screenToFlowPosition],
+  );
+
+  /** 右键空白处：这是 system / note 节点唯一的创建入口 */
+  const onPaneContextMenu = useCallback(
+    (event: React.MouseEvent | MouseEvent) => {
+      event.preventDefault();
+      const flow = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      const at = { x: flow.x - 190, y: flow.y - 40 };
+      setMenu({
+        anchor: { x: event.clientX, y: event.clientY },
+        items: [
+          { label: '新建提问', hint: '双击空白处', onSelect: () => addRootNode('user', at) },
+          {
+            label: '新建系统提示',
+            hint: '注入下游所有分支',
+            onSelect: () => addRootNode('system', at),
+          },
+          {
+            label: '新建批注',
+            hint: '默认不进上下文',
+            onSelect: () => addRootNode('note', at),
+          },
+        ],
+      });
+    },
+    [addRootNode, screenToFlowPosition],
   );
 
   return (
-    <ReactFlow
-      nodes={rfNodes}
-      edges={rfEdges}
-      nodeTypes={nodeTypes}
-      onNodesChange={onNodesChange}
-      onConnect={onConnect}
-      onConnectStart={() => document.body.classList.add('is-connecting')}
-      onConnectEnd={() => document.body.classList.remove('is-connecting')}
-      onEdgesDelete={onEdgesDelete}
-      onPaneClick={() => select(null)}
-      onDoubleClick={onPaneDoubleClick}
-      minZoom={0.15}
-      maxZoom={2}
-      defaultViewport={{ x: 80, y: 80, zoom: 0.8 }}
-      deleteKeyCode={null}
-      // 必须关掉：d3-zoom 的双击缩放会 stopPropagation，把 onDoubleClick 吃掉。
-      // 在这个应用里「双击空白处建节点」也比双击缩放有用得多。
-      zoomOnDoubleClick={false}
-    >
-      <Background variant={BackgroundVariant.Dots} gap={24} size={1.4} />
-      <Controls showInteractive={false} position="bottom-left" />
-      <MiniMap
-        pannable
-        zoomable
-        position="bottom-right"
-        nodeClassName={(n) => `mm-node mm-${nodes?.[n.id]?.role ?? 'user'}`}
-        nodeStrokeWidth={0}
-        nodeBorderRadius={3}
+    <>
+      <ReactFlow
+        nodes={rfNodes}
+        edges={rfEdges}
+        nodeTypes={nodeTypes}
+        onNodesChange={onNodesChange}
+        onConnect={onConnect}
+        onConnectStart={() => document.body.classList.add('is-connecting')}
+        onConnectEnd={() => document.body.classList.remove('is-connecting')}
+        onEdgesDelete={onEdgesDelete}
+        onPaneClick={() => select(null)}
+        onDoubleClick={onPaneDoubleClick}
+        onPaneContextMenu={onPaneContextMenu}
+        minZoom={0.15}
+        maxZoom={2}
+        defaultViewport={{ x: 80, y: 80, zoom: 0.8 }}
+        deleteKeyCode={null}
+        // 必须关掉：d3-zoom 的双击缩放会 stopPropagation，把 onDoubleClick 吃掉。
+        // 在这个应用里「双击空白处建节点」也比双击缩放有用得多。
+        zoomOnDoubleClick={false}
+      >
+        <Background variant={BackgroundVariant.Dots} gap={24} size={1.4} />
+        <Controls showInteractive={false} position="bottom-left" />
+        <MiniMap
+          pannable
+          zoomable
+          position="bottom-right"
+          nodeClassName={(n) => `mm-node mm-${nodes?.[n.id]?.role ?? 'user'}`}
+          nodeStrokeWidth={0}
+          nodeBorderRadius={3}
+        />
+      </ReactFlow>
+      <ContextMenu
+        anchor={menu?.anchor ?? null}
+        items={menu?.items ?? []}
+        onClose={() => setMenu(null)}
       />
-    </ReactFlow>
+    </>
   );
 }

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ChatNode, Graph, GraphMeta, NodeRole, Profile, Settings } from '../types';
 import { buildContext, collectDescendants, wouldCreateCycle, type NodeMap } from '../lib/context';
+import { emptyHistory, record, redo as redoStep, undo as undoStep, type StepResult } from '../lib/history';
 import { LlmError, streamChat } from '../lib/llm';
 import { placeChild, placeSibling } from '../lib/layout';
 import * as db from '../lib/db';
@@ -62,6 +63,13 @@ interface State {
   settings: Settings;
   selectedId: string | null;
   ready: boolean;
+  /** 只暴露能否撤销/重做，历史本身放在闭包里，避免每次快照都触发全局重渲染 */
+  canUndo: boolean;
+  canRedo: boolean;
+
+  /** 返回被撤销/重做的操作名，供 toast 提示；没得撤了返回 null */
+  undo: () => string | null;
+  redo: () => string | null;
 
   init: () => Promise<void>;
   refreshGraphList: () => Promise<void>;
@@ -74,7 +82,8 @@ interface State {
   select: (id: string | null) => void;
   updateNode: (id: string, patch: Partial<ChatNode>) => void;
   moveNode: (id: string, position: { x: number; y: number }) => void;
-  removeNode: (id: string, cascade: boolean) => void;
+  /** 返回实际删掉的节点数，调用方用它提示「删了 N 个，⌘Z 可撤销」 */
+  removeNode: (id: string, cascade: boolean) => number;
   addChild: (parentId: string, role: NodeRole) => string | null;
   addSibling: (nodeId: string) => string | null;
   addRootNode: (role: NodeRole, position: { x: number; y: number }) => string | null;
@@ -93,15 +102,66 @@ interface State {
 }
 
 export const useStore = create<State>((set, get) => {
-  /** 所有对图的写操作都走这里：统一打时间戳 + 排队落盘 */
-  const commit = (mutate: (nodes: NodeMap) => void) => {
+  let history = emptyHistory<NodeMap>();
+
+  const syncHistoryFlags = () => {
+    const canUndo = history.past.length > 0;
+    const canRedo = history.future.length > 0;
+    const s = get();
+    if (s.canUndo !== canUndo || s.canRedo !== canRedo) set({ canUndo, canRedo });
+  };
+
+  const resetHistory = () => {
+    history = emptyHistory<NodeMap>();
+    syncHistoryFlags();
+  };
+
+  interface CommitOptions {
+    /** 操作名，撤销时回显给用户 */
+    label?: string;
+    /** 传 false 表示不入历史：流式输出每 33ms 一次，会瞬间淹没历史栈 */
+    history?: boolean;
+    /** 同 key 的连续操作合并成一条（连续打字、一次拖拽的每个 mousemove） */
+    coalesceKey?: string;
+  }
+
+  /** 所有对图的写操作都走这里：记历史 + 打时间戳 + 排队落盘 */
+  const commit = (mutate: (nodes: NodeMap) => void, options: CommitOptions = {}) => {
     const graph = get().graph;
     if (!graph) return;
+
+    if (options.history !== false) {
+      history = record(history, {
+        state: graph.nodes, // 变更「前」的快照，撤销要回到这里
+        label: options.label ?? '修改',
+        coalesceKey: options.coalesceKey,
+        at: now(),
+      });
+    }
+
     const nodes = { ...graph.nodes };
     mutate(nodes);
     const next: Graph = { ...graph, nodes, updatedAt: now() };
     set({ graph: next });
     saver.queue(next);
+    syncHistoryFlags();
+  };
+
+  /** 撤销和重做只换 nodes，不动画布 id/标题，也不记新历史 */
+  const applyStep = (step: StepResult<NodeMap> | null): string | null => {
+    const graph = get().graph;
+    if (!step || !graph) return null;
+    history = step.history;
+    const next: Graph = { ...graph, nodes: step.state, updatedAt: now() };
+    // 撤销后选中的节点可能已经不存在了
+    const selectedId = get().selectedId;
+    set({
+      graph: next,
+      selectedId: selectedId && step.state[selectedId] ? selectedId : null,
+    });
+    saver.queue(next);
+    syncHistoryFlags();
+    return step.label;
   };
 
   const persistSettings = (settings: Settings) => {
@@ -132,30 +192,37 @@ export const useStore = create<State>((set, get) => {
 
     const profile = profileFor(target.profileId);
     if (!profile.apiKey && !profile.baseUrl.includes('localhost')) {
-      commit((nodes) => {
-        nodes[assistantId] = {
-          ...nodes[assistantId]!,
-          status: 'error',
-          error: '还没填 API Key，点右上角「设置」配置一下。',
-          updatedAt: now(),
-        };
-      });
+      commit(
+        (nodes) => {
+          nodes[assistantId] = {
+            ...nodes[assistantId]!,
+            status: 'error',
+            error: '还没填 API Key，点右上角「设置」配置一下。',
+            updatedAt: now(),
+          };
+        },
+        { history: false },
+      );
       return;
     }
 
-    commit((nodes) => {
-      nodes[assistantId] = {
-        ...nodes[assistantId]!,
-        content: '',
-        reasoning: '',
-        status: 'streaming',
-        error: undefined,
-        usage: undefined,
-        model: profile.model,
-        profileId: profile.id,
-        updatedAt: now(),
-      };
-    });
+    // 这一步会清空已有回答，必须可撤销——重新生成把好答案冲掉是很常见的手滑
+    commit(
+      (nodes) => {
+        nodes[assistantId] = {
+          ...nodes[assistantId]!,
+          content: '',
+          reasoning: '',
+          status: 'streaming',
+          error: undefined,
+          usage: undefined,
+          model: profile.model,
+          profileId: profile.id,
+          updatedAt: now(),
+        };
+      },
+      { label: '生成回答' },
+    );
 
     const { settings } = get();
     const messages = buildContext(get().graph!.nodes, assistantId, {
@@ -164,14 +231,17 @@ export const useStore = create<State>((set, get) => {
     });
 
     if (!messages.some((m) => m.role !== 'system')) {
-      commit((nodes) => {
-        nodes[assistantId] = {
-          ...nodes[assistantId]!,
-          status: 'error',
-          error: '上下文是空的 —— 往上游的节点里写点内容再发送。',
-          updatedAt: now(),
-        };
-      });
+      commit(
+        (nodes) => {
+          nodes[assistantId] = {
+            ...nodes[assistantId]!,
+            status: 'error',
+            error: '上下文是空的 —— 往上游的节点里写点内容再发送。',
+            updatedAt: now(),
+          };
+        },
+        { history: false },
+      );
       return;
     }
 
@@ -184,19 +254,23 @@ export const useStore = create<State>((set, get) => {
     let lastFlush = 0;
 
     const flush = (status: ChatNode['status'], error?: string) => {
-      commit((nodes) => {
-        const current = nodes[assistantId];
-        if (!current) return;
-        nodes[assistantId] = {
-          ...current,
-          content,
-          reasoning: reasoning || undefined,
-          usage,
-          status,
-          error,
-          updatedAt: now(),
-        };
-      });
+      commit(
+        (nodes) => {
+          const current = nodes[assistantId];
+          if (!current) return;
+          nodes[assistantId] = {
+            ...current,
+            content,
+            reasoning: reasoning || undefined,
+            usage,
+            status,
+            error,
+            updatedAt: now(),
+          };
+        },
+        // 每 33ms 一次，入历史会瞬间把栈冲爆；起点已经记过了
+        { history: false },
+      );
       lastFlush = performance.now();
     };
 
@@ -230,6 +304,19 @@ export const useStore = create<State>((set, get) => {
     settings: DEFAULT_SETTINGS,
     selectedId: null,
     ready: false,
+    canUndo: false,
+    canRedo: false,
+
+    undo() {
+      // 先掐掉在跑的请求：否则流式输出会继续往刚被还原的节点里写，状态就乱了
+      for (const controller of controllers.values()) controller.abort();
+      return applyStep(undoStep(history, get().graph?.nodes ?? {}));
+    },
+
+    redo() {
+      for (const controller of controllers.values()) controller.abort();
+      return applyStep(redoStep(history, get().graph?.nodes ?? {}));
+    },
 
     async init() {
       const [settings, lastId, graphs] = await Promise.all([
@@ -241,6 +328,7 @@ export const useStore = create<State>((set, get) => {
       const merged: Settings = { ...DEFAULT_SETTINGS, ...(settings ?? {}) };
       if (!merged.profiles?.length) merged.profiles = DEFAULT_SETTINGS.profiles;
 
+      resetHistory();
       let graph = lastId ? await db.loadGraph(lastId) : undefined;
       if (!graph && graphs.length) graph = await db.loadGraph(graphs[0]!.id);
       if (!graph) {
@@ -259,6 +347,7 @@ export const useStore = create<State>((set, get) => {
 
     async newGraph() {
       saver.flush();
+      resetHistory(); // 历史是会话状态，不跨画布
       const graph = emptyGraph();
       await db.saveGraph(graph);
       await db.saveLastGraphId(graph.id);
@@ -269,6 +358,7 @@ export const useStore = create<State>((set, get) => {
       saver.flush();
       const graph = await db.loadGraph(id);
       if (!graph) return;
+      resetHistory();
       await db.saveLastGraphId(id);
       set({ graph: sanitize(graph), selectedId: null });
     },
@@ -315,6 +405,7 @@ export const useStore = create<State>((set, get) => {
       };
       await db.saveGraph(graph);
       await db.saveLastGraphId(graph.id);
+      resetHistory();
       set({ graph, selectedId: null, graphs: await db.listGraphs() });
     },
 
@@ -323,40 +414,53 @@ export const useStore = create<State>((set, get) => {
     },
 
     updateNode(id, patch) {
-      commit((nodes) => {
-        const current = nodes[id];
-        if (!current) return;
-        nodes[id] = { ...current, ...patch, updatedAt: now() };
-      });
+      // 连续打字合并成一条历史，否则每敲一个字符就是一次撤销
+      const isTyping = 'content' in patch && Object.keys(patch).length === 1;
+      commit(
+        (nodes) => {
+          const current = nodes[id];
+          if (!current) return;
+          nodes[id] = { ...current, ...patch, updatedAt: now() };
+        },
+        isTyping ? { label: '编辑内容', coalesceKey: `text:${id}` } : { label: '修改节点' },
+      );
     },
 
     moveNode(id, position) {
-      commit((nodes) => {
-        const current = nodes[id];
-        if (!current) return;
-        nodes[id] = { ...current, position };
-      });
+      commit(
+        (nodes) => {
+          const current = nodes[id];
+          if (!current) return;
+          nodes[id] = { ...current, position };
+        },
+        // 拖拽期间每次 mousemove 都会调进来，一次拖拽只该留一条历史
+        { label: '移动节点', coalesceKey: `move:${id}` },
+      );
     },
 
     removeNode(id, cascade) {
       const graph = get().graph;
-      if (!graph) return;
+      if (!graph) return 0;
       const doomed = cascade ? collectDescendants(graph.nodes, id) : new Set([id]);
       for (const victim of doomed) controllers.get(victim)?.abort();
 
-      commit((nodes) => {
-        for (const victim of doomed) delete nodes[victim];
-        // 幸存者不能挂着已删除的父节点
-        for (const [nodeId, node] of Object.entries(nodes)) {
-          if (node.parentIds.some((p) => doomed.has(p))) {
-            nodes[nodeId] = {
-              ...node,
-              parentIds: node.parentIds.filter((p) => !doomed.has(p)),
-            };
+      commit(
+        (nodes) => {
+          for (const victim of doomed) delete nodes[victim];
+          // 幸存者不能挂着已删除的父节点
+          for (const [nodeId, node] of Object.entries(nodes)) {
+            if (node.parentIds.some((p) => doomed.has(p))) {
+              nodes[nodeId] = {
+                ...node,
+                parentIds: node.parentIds.filter((p) => !doomed.has(p)),
+              };
+            }
           }
-        }
-      });
+        },
+        { label: doomed.size > 1 ? `删除 ${doomed.size} 个节点` : '删除节点' },
+      );
       if (doomed.has(get().selectedId ?? '')) set({ selectedId: null });
+      return doomed.size;
     },
 
     addChild(parentId, role) {
@@ -373,9 +477,12 @@ export const useStore = create<State>((set, get) => {
         createdAt: now(),
         updatedAt: now(),
       };
-      commit((nodes) => {
-        nodes[id] = node;
-      });
+      commit(
+        (nodes) => {
+          nodes[id] = node;
+        },
+        { label: '新建节点' },
+      );
       set({ selectedId: id });
       return id;
     },
@@ -394,9 +501,12 @@ export const useStore = create<State>((set, get) => {
         createdAt: now(),
         updatedAt: now(),
       };
-      commit((nodes) => {
-        nodes[id] = node;
-      });
+      commit(
+        (nodes) => {
+          nodes[id] = node;
+        },
+        { label: '新建并列分支' },
+      );
       set({ selectedId: id });
       return id;
     },
@@ -405,17 +515,20 @@ export const useStore = create<State>((set, get) => {
       const graph = get().graph;
       if (!graph) return null;
       const id = uid();
-      commit((nodes) => {
-        nodes[id] = {
-          id,
-          role,
-          content: '',
-          parentIds: [],
-          position,
-          createdAt: now(),
-          updatedAt: now(),
-        };
-      });
+      commit(
+        (nodes) => {
+          nodes[id] = {
+            id,
+            role,
+            content: '',
+            parentIds: [],
+            position,
+            createdAt: now(),
+            updatedAt: now(),
+          };
+        },
+        { label: '新建节点' },
+      );
       set({ selectedId: id });
       return id;
     },
@@ -426,23 +539,29 @@ export const useStore = create<State>((set, get) => {
       if (!graph || !graph.nodes[from] || !graph.nodes[to]) return '节点不存在';
       if (graph.nodes[to]!.parentIds.includes(from)) return '这条连线已经存在了';
       if (wouldCreateCycle(graph.nodes, from, to)) return '不能连成环 —— 上下文没法拓扑排序';
-      commit((nodes) => {
-        const node = nodes[to]!;
-        nodes[to] = { ...node, parentIds: [...node.parentIds, from], updatedAt: now() };
-      });
+      commit(
+        (nodes) => {
+          const node = nodes[to]!;
+          nodes[to] = { ...node, parentIds: [...node.parentIds, from], updatedAt: now() };
+        },
+        { label: '连接节点' },
+      );
       return null;
     },
 
     unlinkNodes(from, to) {
-      commit((nodes) => {
-        const node = nodes[to];
-        if (!node) return;
-        nodes[to] = {
-          ...node,
-          parentIds: node.parentIds.filter((p) => p !== from),
-          updatedAt: now(),
-        };
-      });
+      commit(
+        (nodes) => {
+          const node = nodes[to];
+          if (!node) return;
+          nodes[to] = {
+            ...node,
+            parentIds: node.parentIds.filter((p) => p !== from),
+            updatedAt: now(),
+          };
+        },
+        { label: '断开连接' },
+      );
     },
 
     async send(userNodeId) {

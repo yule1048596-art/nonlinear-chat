@@ -1,8 +1,20 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useStore } from '../store/useStore';
+import { toast } from '../lib/toast';
 import type { NodeRole } from '../types';
+import { ContextMenu, type MenuAnchor } from './ContextMenu';
 import { Markdown } from './Markdown';
+
+/**
+ * 可互相切换的节点类型。assistant 刻意排除在外：它的内容是模型生成的，
+ * 改成 user/note 会让「这句话是谁说的」和实际来源脱节，上下文就不可信了。
+ */
+const SWITCHABLE_ROLES: Array<{ role: Exclude<NodeRole, 'assistant'>; hint: string }> = [
+  { role: 'user', hint: '作为提问发出去' },
+  { role: 'system', hint: '注入下游所有分支' },
+  { role: 'note', hint: '默认不进上下文' },
+];
 
 const ROLE_LABEL: Record<NodeRole, string> = {
   system: '系统',
@@ -70,6 +82,7 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
 
   const [showReasoning, setShowReasoning] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [roleMenu, setRoleMenu] = useState<MenuAnchor | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const streaming = node?.status === 'streaming';
@@ -114,7 +127,21 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
 
       <header className="node-head">
         <span className="role-dot" />
-        <span className="role-badge">{ROLE_LABEL[node.role]}</span>
+        {node.role === 'assistant' ? (
+          <span className="role-badge">{ROLE_LABEL.assistant}</span>
+        ) : (
+          <button
+            className="role-badge role-switch nodrag"
+            title="切换节点类型"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setRoleMenu({ x: r.left, y: r.bottom + 4 });
+            }}
+          >
+            {ROLE_LABEL[node.role]}
+            <span className="role-caret">▾</span>
+          </button>
+        )}
         {streaming && <span className="pulse" title="生成中" />}
         <span className="spacer" />
         <span className="node-meta-group">
@@ -227,13 +254,27 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
         <button
           className="icon-btn danger"
           title="删除（按住 Shift 连同所有下游一起删）"
-          onClick={(e) => removeNode(id, e.shiftKey)}
+          onClick={(e) => {
+            const count = removeNode(id, e.shiftKey);
+            // 有撤销之后，模态确认框是更差的选择：挡路，而且删错了本来就能撤回来
+            toast(count > 1 ? `已删除 ${count} 个节点 · ⌘Z 撤销` : '已删除 · ⌘Z 撤销');
+          }}
         >
           ✕
         </button>
       </footer>
 
       <Handle type="source" position={Position.Bottom} className="handle" />
+
+      <ContextMenu
+        anchor={roleMenu}
+        items={SWITCHABLE_ROLES.filter((r) => r.role !== node.role).map((r) => ({
+          label: `改为「${ROLE_LABEL[r.role]}」`,
+          hint: r.hint,
+          onSelect: () => updateNode(id, { role: r.role }),
+        }))}
+        onClose={() => setRoleMenu(null)}
+      />
     </div>
   );
 });

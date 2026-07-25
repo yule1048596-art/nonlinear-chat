@@ -2,19 +2,18 @@ import { useRef } from 'react';
 import { useStore } from '../store/useStore';
 import type { Graph } from '../types';
 import { MODE_ICON, MODE_LABEL, type ThemeMode } from '../lib/theme';
+import { toast } from '../lib/toast';
 
 export function Toolbar({
   themeMode,
   onCycleTheme,
   onOpenGraphs,
   onOpenSettings,
-  onToast,
 }: {
   themeMode: ThemeMode;
   onCycleTheme: () => void;
   onOpenGraphs: () => void;
   onOpenSettings: () => void;
-  onToast: (msg: string) => void;
 }) {
   const graph = useStore((s) => s.graph);
   const renameGraph = useStore((s) => s.renameGraph);
@@ -23,6 +22,11 @@ export function Toolbar({
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // 画布上可以同时跑多个分支，但正在生成的节点可能在视野外，这里给个总数
+  const streamingCount = useStore(
+    (s) => Object.values(s.graph?.nodes ?? {}).filter((n) => n.status === 'streaming').length,
+  );
 
   const exportGraph = () => {
     if (!graph) return;
@@ -41,9 +45,9 @@ export function Toolbar({
       const parsed = JSON.parse(await file.text()) as Graph;
       if (!parsed?.nodes || typeof parsed.nodes !== 'object') throw new Error('缺少 nodes 字段');
       await importGraph(parsed);
-      onToast('导入成功');
+      toast('导入成功');
     } catch (err) {
-      onToast(`导入失败：${(err as Error).message}`);
+      toast(`导入失败：${(err as Error).message}`);
     } finally {
       if (fileRef.current) fileRef.current.value = '';
     }
@@ -77,6 +81,13 @@ export function Toolbar({
       />
 
       <span className="spacer" />
+
+      {streamingCount > 0 && (
+        <span className="streaming-badge" title="正在生成的节点数">
+          <span className="pulse" />
+          {streamingCount} 个生成中
+        </span>
+      )}
 
       <select
         className="select"
