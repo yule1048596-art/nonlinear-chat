@@ -28,6 +28,17 @@ const now = () => Date.now();
 
 /** 正在跑的请求，放在 React 状态外面，避免每个 token 都触发无谓的重渲染 */
 const controllers = new Map<string, AbortController>();
+
+/**
+ * 被撤销/重做作废掉的生成。
+ *
+ * abort() 是同步返回的，但 run() 里的 AbortError 分支要到之后的微任务才执行。
+ * 那时它会把已经收到的部分内容 flush 回节点里 —— 正好盖掉刚刚还原出来的状态，
+ * 撤销就被静默地取消了。所以要区分两种中止：
+ *   - 用户按「停止」：保留已生成的部分（这是他想要的）
+ *   - 撤销/重做：整个结果作废，一个字都不许写回去
+ */
+const abandoned = new Set<string>();
 const saver = db.createDebouncedSaver();
 
 function emptyGraph(): Graph {
@@ -148,6 +159,14 @@ export const useStore = create<State>((set, get) => {
     set({ graph: next });
     saver.queue(next);
     syncHistoryFlags();
+  };
+
+  /** 掐掉所有在跑的生成，并标记为作废——它们的结果不该写回还原后的状态 */
+  const abandonRunning = () => {
+    for (const [id, controller] of controllers) {
+      abandoned.add(id);
+      controller.abort();
+    }
   };
 
   /** 撤销和重做只换 nodes，不动画布 id/标题，也不记新历史 */
@@ -288,8 +307,9 @@ export const useStore = create<State>((set, get) => {
       flush('idle');
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') {
-        // 用户手动停止：保留已经吐出来的部分
-        flush('idle');
+        // 被撤销/重做作废的，一个字都不写回去，否则会盖掉刚还原的状态；
+        // 用户主动按「停止」则保留已经吐出来的部分
+        if (!abandoned.has(assistantId)) flush('idle');
       } else if (err instanceof LlmError) {
         flush('error', err.hint ? `${err.message}\n\n${err.hint}` : err.message);
       } else {
@@ -297,6 +317,7 @@ export const useStore = create<State>((set, get) => {
       }
     } finally {
       controllers.delete(assistantId);
+      abandoned.delete(assistantId);
       saver.flush();
     }
   };
@@ -311,13 +332,12 @@ export const useStore = create<State>((set, get) => {
     canRedo: false,
 
     undo() {
-      // 先掐掉在跑的请求：否则流式输出会继续往刚被还原的节点里写，状态就乱了
-      for (const controller of controllers.values()) controller.abort();
+      abandonRunning();
       return applyStep(undoStep(history, get().graph?.nodes ?? {}));
     },
 
     redo() {
-      for (const controller of controllers.values()) controller.abort();
+      abandonRunning();
       return applyStep(redoStep(history, get().graph?.nodes ?? {}));
     },
 
@@ -367,6 +387,9 @@ export const useStore = create<State>((set, get) => {
     },
 
     async removeGraph(id) {
+      // 必须先丢弃待写入：防抖存盘里可能还压着这个画布，删完定时器一到
+      // 又会把它写回去，用户看到的就是「删了又自己回来了」
+      saver.discard(id);
       await db.deleteGraph(id);
       const graphs = await db.listGraphs();
       set({ graphs });

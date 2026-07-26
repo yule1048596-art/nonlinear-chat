@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { useStore } from '../store/useStore';
-import type { ChatNode, NodeRole } from '../types';
+import { findHits, type Hit } from '../lib/search';
+import type { NodeRole } from '../types';
 
 const ROLE_LABEL: Record<NodeRole, string> = {
   system: '系统',
@@ -9,43 +10,6 @@ const ROLE_LABEL: Record<NodeRole, string> = {
   assistant: 'AI',
   note: '批注',
 };
-
-const MAX_RESULTS = 40;
-
-interface Hit {
-  node: ChatNode;
-  /** 命中位置左右各留一点，让用户看清上下文 */
-  excerpt: string;
-  matchStart: number;
-  matchLength: number;
-}
-
-function findHits(nodes: Record<string, ChatNode>, query: string): Hit[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
-
-  const hits: Hit[] = [];
-  for (const node of Object.values(nodes)) {
-    const index = node.content.toLowerCase().indexOf(q);
-    if (index === -1) continue;
-
-    const from = Math.max(0, index - 24);
-    const to = Math.min(node.content.length, index + q.length + 56);
-    const excerpt =
-      (from > 0 ? '…' : '') +
-      node.content.slice(from, to).replace(/\s+/g, ' ') +
-      (to < node.content.length ? '…' : '');
-
-    hits.push({
-      node,
-      excerpt,
-      matchStart: index - from + (from > 0 ? 1 : 0),
-      matchLength: q.length,
-    });
-  }
-  // 越晚改动的越可能是用户在找的
-  return hits.sort((a, b) => b.node.updatedAt - a.node.updatedAt).slice(0, MAX_RESULTS);
-}
 
 export function SearchPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const nodes = useStore((s) => s.graph?.nodes);

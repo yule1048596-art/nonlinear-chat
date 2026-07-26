@@ -144,6 +144,9 @@ export function buildContext(
 
   if (options.limit && options.limit > 0 && body.length > options.limit) {
     body = body.slice(-options.limit);
+    // 从后往前切很可能正好切在一问一答中间，让对话以 assistant 开头。
+    // 那读起来就是模型凭空接了半句话，部分服务商也要求首条必须是 user。
+    while (body.length && body[0]!.role === 'assistant') body.shift();
   }
 
   const messages: ChatMessage[] = [];

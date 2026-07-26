@@ -185,7 +185,7 @@ src/
 npm test
 ```
 
-43 tests covering DAG topological ordering, multi-parent merging, diamond deduplication, cycle detection, context trimming, collapse-visibility propagation, undo-stack coalescing and limits, and token estimation.
+61 tests covering DAG topological ordering, multi-parent merging, diamond deduplication, cycle detection, context trimming, collapse-visibility propagation, undo-stack coalescing and limits, token estimation, search-excerpt offsets, and debounced-save timing.
 
 To debug without spending real API credits, use the fake server in the repo:
 
@@ -224,6 +224,9 @@ These all took real time to track down:
 - **Closing the page mid-stream** leaves nodes stuck in `streaming`. They're normalised to `idle` on load.
 - **A hover-revealed action bar must always occupy its space**, or the node's height changes on hover and the edges twitch. Control it with `opacity`, not `display`.
 - **A GitHub Pages workflow must not use `concurrency: cancel-in-progress: true`.** Cancelling a run mid-publish leaves GitHub stuck in `updating_pages`, and every later deploy then polls until it times out.
+- **`abort()` returns synchronously, but the aborted request's `catch` runs a microtask later.** Undo aborts and then restores state; that late `catch` writes the partially-streamed content back over the restored node, silently cancelling the undo. "User pressed stop" (keep the partial) and "undo discarded this" (write nothing) must be distinguished.
+- **Cancel a pending write before deleting the data it targets.** The debounced saver may still be holding a just-edited canvas; after deletion its timer fires and writes the canvas back — it reappears.
+- **When an excerpt collapses whitespace, recompute the highlight offset on the collapsed string.** Computing offsets on the original and then collapsing shifts the highlight right by one per collapsed run — in practice far enough to land out of bounds.
 
 ## License
 

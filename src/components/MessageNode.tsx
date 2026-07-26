@@ -86,10 +86,6 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const streaming = node?.status === 'streaming';
-  // 没有下游就不必显示折叠开关
-  const hasChildren = useStore((s) =>
-    Object.values(s.graph?.nodes ?? {}).some((n) => n.parentIds.includes(id)),
-  );
 
   // 流式输出时把视野钉在底部，除非用户自己往上滚了
   useEffect(() => {
@@ -109,10 +105,17 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
 
   if (!node) return null;
 
-  const { inContext, dimmed, hiddenCount = 0 } = (data ?? {}) as {
+  const {
+    inContext,
+    dimmed,
+    hiddenCount = 0,
+    hasChildren = false,
+  } = (data ?? {}) as {
     inContext?: boolean;
     dimmed?: boolean;
     hiddenCount?: number;
+    // 由 Canvas 统一算好下发：每个节点自己遍历全表判断是 O(N²)
+    hasChildren?: boolean;
   };
   const isText = node.role !== 'assistant';
   const collapsed = node.collapsed;

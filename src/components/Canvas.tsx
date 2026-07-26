@@ -49,6 +49,18 @@ export function Canvas() {
   // 拉线过程中把所有节点的连接点都显出来，否则得靠猜往哪儿放
   useEffect(() => () => document.body.classList.remove('is-connecting'), []);
 
+  /**
+   * 哪些节点有下游。放这里算一次是必要的：原来每个 MessageNode 各自
+   * 遍历全表判断，N 个节点就是 O(N²)，而流式输出每 33ms 就触发一轮。
+   */
+  const parentIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const node of Object.values(nodes ?? {})) {
+      for (const p of node.parentIds) set.add(p);
+    }
+    return set;
+  }, [nodes]);
+
   /** 被折叠子树藏起来的节点 */
   const hidden = useMemo(() => (nodes ? computeHidden(nodes) : new Set<string>()), [nodes]);
 
@@ -96,6 +108,7 @@ export function Canvas() {
       const measured = dimsRef.current.get(node.id);
       const isHidden = hidden.has(node.id);
       const hiddenCount = hiddenCounts.get(node.id) ?? 0;
+      const hasChildren = parentIds.has(node.id);
       const prev = cache.get(node.id);
       if (
         prev &&
@@ -106,7 +119,8 @@ export function Canvas() {
         prev.hidden === isHidden &&
         (prev.data as { inContext: boolean }).inContext === inContext &&
         (prev.data as { dimmed: boolean }).dimmed === dimmed &&
-        (prev.data as { hiddenCount: number }).hiddenCount === hiddenCount
+        (prev.data as { hiddenCount: number }).hiddenCount === hiddenCount &&
+        (prev.data as { hasChildren: boolean }).hasChildren === hasChildren
       ) {
         out.push(prev);
         continue;
@@ -118,14 +132,14 @@ export function Canvas() {
         selected: isSelected,
         measured,
         hidden: isHidden,
-        data: { inContext, dimmed, hiddenCount },
+        data: { inContext, dimmed, hiddenCount, hasChildren },
       };
       cache.set(node.id, next);
       out.push(next);
     }
     for (const key of [...cache.keys()]) if (!alive.has(key)) cache.delete(key);
     return out;
-  }, [nodes, selectedId, contextSet, dimsVersion, hidden, hiddenCounts]);
+  }, [nodes, selectedId, contextSet, dimsVersion, hidden, hiddenCounts, parentIds]);
 
   const rfEdges = useMemo<Edge[]>(() => {
     if (!nodes) return [];

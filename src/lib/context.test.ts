@@ -133,11 +133,32 @@ describe('buildContext', () => {
       node('a1', 'assistant', '二', ['u1']),
       node('u2', 'user', '三', ['a1']),
     );
-    expect(texts(buildContext(g, 'u2', { limit: 2 }))).toEqual([
-      'system:设定',
-      'assistant:二',
-      'user:三',
-    ]);
+    // limit=2 会切出 [assistant 二, user 三]，开头的 assistant 要被丢掉
+    expect(texts(buildContext(g, 'u2', { limit: 2 }))).toEqual(['system:设定', 'user:三']);
+  });
+
+  /**
+   * 从后往前裁剪很容易正好切在一问一答中间。留着开头的 assistant，
+   * 对话读起来就是模型凭空接了半句话，部分服务商还会直接拒绝。
+   */
+  it('裁剪后不会以 assistant 开头', () => {
+    const g = graph(
+      node('u1', 'user', '问一'),
+      node('a1', 'assistant', '答一', ['u1']),
+      node('u2', 'user', '问二', ['a1']),
+      node('a2', 'assistant', '答二', ['u2']),
+      node('u3', 'user', '问三', ['a2']),
+    );
+    for (const limit of [1, 2, 3, 4, 5]) {
+      const msgs = buildContext(g, 'u3', { limit });
+      const body = msgs.filter((m) => m.role !== 'system');
+      if (body.length) expect(body[0]!.role).toBe('user');
+    }
+  });
+
+  it('limit 大于实际条数时原样返回', () => {
+    const g = graph(node('u1', 'user', '问一'), node('a1', 'assistant', '答一', ['u1']));
+    expect(texts(buildContext(g, 'a1', { limit: 99 }))).toEqual(['user:问一', 'assistant:答一']);
   });
 });
 
