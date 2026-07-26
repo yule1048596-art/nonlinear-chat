@@ -1,5 +1,16 @@
 import { create } from 'zustand';
-import type { ChatNode, Graph, GraphMeta, NodeRole, Profile, Settings } from '../types';
+import type {
+  ChatMessage,
+  ChatNode,
+  EmbeddingSettings,
+  Graph,
+  GraphMeta,
+  KnowledgeChunk,
+  KnowledgeFile,
+  NodeRole,
+  Profile,
+  Settings,
+} from '../types';
 import {
   buildContext,
   collectDescendants,
@@ -7,6 +18,9 @@ import {
   wouldCreateCycle,
   type NodeMap,
 } from '../lib/context';
+import { DEFAULT_EMBEDDING, EmbeddingError, embedOne, type EmbeddingConfig } from '../lib/embeddings';
+import { indexFile } from '../lib/indexer';
+import { retrieve, type RetrievedChunk } from '../lib/knowledge';
 import { emptyHistory, record, redo as redoStep, undo as undoStep, type StepResult } from '../lib/history';
 import { LlmError, streamChat } from '../lib/llm';
 import { placeChild, placeSibling } from '../lib/layout';
@@ -42,7 +56,10 @@ const DEFAULT_SETTINGS: Settings = {
   activeProfileId: 'default',
   systemPrompt: '',
   contextLimit: 0,
+  embedding: { ...DEFAULT_EMBEDDING, topK: 5 },
 };
+
+const DEFAULT_EMBEDDING_SETTINGS: EmbeddingSettings = { ...DEFAULT_EMBEDDING, topK: 5 };
 
 const uid = () => crypto.randomUUID();
 const now = () => Date.now();
@@ -61,6 +78,40 @@ const controllers = new Map<string, AbortController>();
  */
 const abandoned = new Set<string>();
 const saver = db.createDebouncedSaver();
+
+/**
+ * 当前画布的全部切块。
+ *
+ * 检索是拿查询向量和每一块算点积，必须全量在手。每次提问都从 IndexedDB
+ * 重读几千条（每条还带 1024 个浮点数）纯属浪费，按画布缓存一份，
+ * 增删文件或切画布时作废。
+ */
+let chunkCache: { graphId: string; chunks: KnowledgeChunk[] } | null = null;
+const invalidateChunks = () => {
+  chunkCache = null;
+};
+
+async function loadChunks(graphId: string): Promise<KnowledgeChunk[]> {
+  if (chunkCache?.graphId === graphId) return chunkCache.chunks;
+  const chunks = await db.loadKnowledgeChunks(graphId);
+  chunkCache = { graphId, chunks };
+  return chunks;
+}
+
+/** 检索用的查询词就是这次真正要问的那句话 */
+function lastUserText(messages: ChatMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === 'user') return messages[i]!.content;
+  }
+  return '';
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof EmbeddingError) {
+    return err.hint ? `${err.message}\n\n${err.hint}` : err.message;
+  }
+  return (err as Error)?.message ?? String(err);
+}
 
 function emptyGraph(): Graph {
   const seed: ChatNode = {
@@ -150,6 +201,18 @@ interface State {
   /** 整份恢复：替换所有画布和设置，恢复前自动打快照 */
   restoreBackup: (backup: FullBackup) => Promise<{ graphs: number }>;
 
+  /** 当前画布的知识库。知识库归属画布，切画布就是另一套资料 */
+  knowledgeFiles: KnowledgeFile[];
+  /** 正在建索引的文件，null 表示空闲 */
+  indexing: { name: string; phase: 'parse' | 'embed'; done: number; total: number } | null;
+  refreshKnowledge: () => Promise<void>;
+  /** 逐个建索引。返回成功数和失败明细 —— 一个文件坏了不该拖累其余的 */
+  addKnowledgeFiles: (files: File[]) => Promise<{ ok: number; failed: { name: string; error: string }[] }>;
+  setKnowledgeEnabled: (fileId: string, enabled: boolean) => Promise<void>;
+  removeKnowledgeFile: (fileId: string) => Promise<void>;
+  /** 检索。失败会抛出，由调用方决定是报错还是忽略 */
+  retrieveKnowledge: (query: string) => Promise<RetrievedChunk[]>;
+
   send: (userNodeId: string) => Promise<void>;
   regenerate: (assistantId: string) => Promise<void>;
   branchRegenerate: (assistantId: string) => Promise<void>;
@@ -237,6 +300,17 @@ export const useStore = create<State>((set, get) => {
     void db.saveSettings(settings);
   };
 
+  /** 换画布之后：知识库归属画布，缓存和列表都得跟着换 */
+  const afterGraphSwitch = async () => {
+    invalidateChunks();
+    await get().refreshKnowledge();
+  };
+
+  const embeddingConfig = (): EmbeddingConfig => {
+    const e = get().settings.embedding ?? DEFAULT_EMBEDDING_SETTINGS;
+    return { baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model };
+  };
+
   const profileFor = (profileId?: string): Profile => {
     const { settings } = get();
     return (
@@ -293,10 +367,8 @@ export const useStore = create<State>((set, get) => {
     );
 
     const { settings } = get();
-    const messages = buildContext(get().graph!.nodes, assistantId, {
-      systemPrompt: settings.systemPrompt,
-      limit: settings.contextLimit,
-    });
+    const base = { systemPrompt: settings.systemPrompt, limit: settings.contextLimit };
+    let messages = buildContext(get().graph!.nodes, assistantId, base);
 
     if (!messages.some((m) => m.role !== 'system')) {
       commit(
@@ -311,6 +383,36 @@ export const useStore = create<State>((set, get) => {
         { history: false },
       );
       return;
+    }
+
+    /*
+     * 检索知识库。
+     *
+     * 失败时整条请求就失败，而不是安静地不带资料继续问 —— 用户明明往这个
+     * 画布里加了资料，答案却是凭空编的，这种「看起来正常其实没读资料」
+     * 比直接报错难发现得多。报错文案里给出两条出路：把服务起起来，或者
+     * 在知识库面板里把文件停用。
+     */
+    if (get().knowledgeFiles.some((f) => f.enabled && f.status === 'ready')) {
+      try {
+        const hits = await get().retrieveKnowledge(lastUserText(messages));
+        messages = buildContext(get().graph!.nodes, assistantId, { ...base, knowledge: hits });
+      } catch (err) {
+        commit(
+          (nodes) => {
+            const current = nodes[assistantId];
+            if (!current) return;
+            nodes[assistantId] = {
+              ...current,
+              status: 'error',
+              error: `知识库检索失败，这次提问没有发出去。\n\n${describeError(err)}\n\n也可以在知识库面板里把文件停用，先不带资料提问。`,
+              updatedAt: now(),
+            };
+          },
+          { history: false },
+        );
+        return;
+      }
     }
 
     const controller = new AbortController();
@@ -410,6 +512,7 @@ export const useStore = create<State>((set, get) => {
 
       await db.saveLastGraphId(graph.id);
       set({ settings: merged, graph, graphs: await db.listGraphs(), ready: true });
+      await afterGraphSwitch();
     },
 
     async refreshGraphList() {
@@ -423,6 +526,7 @@ export const useStore = create<State>((set, get) => {
       await db.saveGraph(graph);
       await db.saveLastGraphId(graph.id);
       set({ graph, selectedId: null, graphs: await db.listGraphs() });
+      await afterGraphSwitch();
     },
 
     async openGraph(id) {
@@ -432,6 +536,7 @@ export const useStore = create<State>((set, get) => {
       resetHistory();
       await db.saveLastGraphId(id);
       set({ graph: sanitize(graph), selectedId: null });
+      await afterGraphSwitch();
     },
 
     async removeGraph(id) {
@@ -484,6 +589,7 @@ export const useStore = create<State>((set, get) => {
       await db.saveLastGraphId(graph.id);
       resetHistory();
       set({ graph, selectedId: null, graphs: await db.listGraphs() });
+      await afterGraphSwitch();
     },
 
     select(id) {
@@ -657,6 +763,7 @@ export const useStore = create<State>((set, get) => {
         graphs: await db.listGraphs(),
         snapshots: await db.listSnapshots(),
       });
+      await afterGraphSwitch();
       return { graphs: backup.graphs.length };
     },
 
@@ -717,6 +824,7 @@ export const useStore = create<State>((set, get) => {
         graphs: await db.listGraphs(),
         snapshots: await db.listSnapshots(),
       });
+      await afterGraphSwitch();
       return true;
     },
 
@@ -737,6 +845,7 @@ export const useStore = create<State>((set, get) => {
         graphs: await db.listGraphs(),
         snapshots: await db.listSnapshots(),
       });
+      await afterGraphSwitch();
       return true;
     },
 
@@ -794,6 +903,76 @@ export const useStore = create<State>((set, get) => {
         },
         { label: '断开连接' },
       );
+    },
+
+    knowledgeFiles: [],
+    indexing: null,
+
+    async refreshKnowledge() {
+      const graphId = get().graph?.id;
+      set({ knowledgeFiles: graphId ? await db.listKnowledgeFiles(graphId) : [] });
+    },
+
+    async addKnowledgeFiles(files) {
+      const graphId = get().graph?.id;
+      if (!graphId) return { ok: 0, failed: [] };
+
+      const config = embeddingConfig();
+      const failed: { name: string; error: string }[] = [];
+      let ok = 0;
+
+      for (const source of files) {
+        set({ indexing: { name: source.name, phase: 'parse', done: 0, total: 1 } });
+        try {
+          const { file, chunks } = await indexFile(source, graphId, config, {
+            onProgress: (p) => set({ indexing: { name: source.name, ...p } }),
+          });
+          // 先写块再写文件记录：中途断了只会留下一批无主的块，而检索永远
+          // 按文件记录过滤，读不到它们；反过来则会出现「有文件却检索不到内容」
+          await db.saveKnowledgeChunks(chunks);
+          await db.saveKnowledgeFile(file);
+          invalidateChunks();
+          ok++;
+        } catch (err) {
+          failed.push({ name: source.name, error: describeError(err) });
+        }
+      }
+
+      set({ indexing: null });
+      await get().refreshKnowledge();
+      return { ok, failed };
+    },
+
+    async setKnowledgeEnabled(fileId, enabled) {
+      const file = get().knowledgeFiles.find((f) => f.id === fileId);
+      if (!file) return;
+      await db.saveKnowledgeFile({ ...file, enabled });
+      await get().refreshKnowledge();
+    },
+
+    async removeKnowledgeFile(fileId) {
+      await db.deleteKnowledgeFile(fileId);
+      invalidateChunks();
+      await get().refreshKnowledge();
+    },
+
+    async retrieveKnowledge(query) {
+      const graphId = get().graph?.id;
+      if (!graphId || !query.trim()) return [];
+
+      const files = get().knowledgeFiles.filter((f) => f.enabled && f.status === 'ready');
+      if (!files.length) return [];
+
+      const chunks = await loadChunks(graphId);
+      if (!chunks.length) return [];
+
+      const vector = await embedOne(embeddingConfig(), query);
+      return retrieve(vector, chunks, {
+        topK: get().settings.embedding?.topK ?? DEFAULT_EMBEDDING_SETTINGS.topK,
+        // 只在启用的文件里找。顺带把没有文件记录的无主块挡在外面
+        enabledFileIds: new Set(files.map((f) => f.id)),
+        fileNames: new Map(files.map((f) => [f.id, f.name])),
+      });
     },
 
     async send(userNodeId) {

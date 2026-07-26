@@ -92,6 +92,14 @@ Everything else gets out of the way. Per-node action buttons are hidden until yo
 - Any node can be muted: it stays on the canvas but leaves the downstream context
 - Export a path as a readable Markdown transcript
 
+**Shared knowledge base (RAG)**
+- Drop files onto a canvas; **every conversation on that canvas** shares them
+- Supports `.txt` `.md` `.docx` `.epub` and common plain text (`.json`, `.csv`, `.html`, source files…)
+- Each question semantically retrieves the most relevant passages and prepends them as labelled reference material
+- Which passages matched, which file they came from and at what similarity — all listed in the context preview
+- Files can be disabled individually instead of deleted and re-added
+- If the vector service is unreachable the request is **not sent at all** and says why, rather than quietly answering without the material
+
 **Not losing work**
 - Automatic local snapshots, always taken before deleting / importing / rolling back; restore everything or just one canvas
 - Settings and full-backup export; exports omit API keys by default
@@ -140,6 +148,29 @@ OLLAMA_ORIGINS=* ollama serve
 
 When a connection fails, "Test connection" tells you whether it was CORS, a bad key, or a wrong base URL — not just `Failed to fetch`.
 
+## Setting up the knowledge base
+
+The knowledge base needs a **vector service** to turn text into embeddings for semantic search. That is
+separate from the chat model and configured on its own. Anything speaking OpenAI's `/v1/embeddings`
+works (OpenAI, SiliconFlow, Ollama…).
+
+Running it locally keeps your material on your machine. With llama.cpp and [bge-m3](https://huggingface.co/BAAI/bge-m3):
+
+```bash
+llama-server -m bge-m3.gguf --embedding --embd-normalize 2 --pooling cls \
+  --port 8081 --alias text-embedding-bge-m3 --api-key local-llama
+```
+
+Settings → **知识库向量服务** → base URL `http://localhost:8081/v1`, model `text-embedding-bge-m3` → test the connection.
+
+Three things worth calling out:
+
+1. **Use `localhost`, not `127.0.0.1`.** An https page requesting `http://127.0.0.1` is blocked as mixed content, while `localhost` counts as a potentially-trustworthy origin and is allowed. Same service, same port — only the spelling differs. Entering an IP raises a warning in settings.
+2. **`--embd-normalize 2` is not optional.** Retrieval uses a dot product in place of cosine similarity, which is only equivalent for L2-normalised vectors. Indexing verifies this and fails loudly otherwise.
+3. **If the model lives on an external drive, mount it first.** The connection error says so.
+
+Then open **知识库** in the toolbar and drop files in. Once indexed, every question on that canvas carries the retrieved material.
+
 ## Keyboard and mouse
 
 | Action | Effect |
@@ -184,6 +215,11 @@ src/
 │   ├── search.ts         Node search with excerpt offsets (tested)
 │   ├── tokens.ts         Token estimation (tested)
 │   ├── llm.ts            OpenAI-compatible streaming client (tested)
+│   ├── parsers.ts        txt / md / docx / epub text extraction (tested)
+│   ├── chunking.ts       paragraph-aware chunking with overlap (tested)
+│   ├── embeddings.ts     OpenAI-compatible /v1/embeddings client (tested)
+│   ├── knowledge.ts      vector retrieval and reference-block assembly (tested)
+│   ├── indexer.ts        parse → chunk → embed pipeline (tested)
 │   ├── db.ts             IndexedDB + debounced save with maxWait (tested)
 │   ├── autoLayout.ts     dagre layered layout
 │   ├── layout.ts         Collision-avoiding placement for new nodes
@@ -196,6 +232,7 @@ src/
     ├── MessageNode.tsx   Node card
     ├── ContextPreview.tsx Real request-body preview and path export
     ├── BranchCompare.tsx  Side-by-side comparison of answers to one question
+    ├── KnowledgePanel.tsx knowledge base: drop files, indexing progress, per-file toggle
     ├── SnapshotDrawer.tsx Snapshot list and rollback
     ├── SearchPalette.tsx  ⌘K search
     ├── ContextMenu.tsx    Right-click / role-switch menu
@@ -250,6 +287,11 @@ These all took real time to track down:
 - **`abort()` returns synchronously, but the aborted request's `catch` runs a microtask later.** Undo aborts and then restores state; that late `catch` writes the partially-streamed content back over the restored node, silently cancelling the undo. "User pressed stop" (keep the partial) and "undo discarded this" (write nothing) must be distinguished.
 - **Cancel a pending write before deleting the data it targets.** The debounced saver may still be holding a just-edited canvas; after deletion its timer fires and writes the canvas back — it reappears.
 - **When an excerpt collapses whitespace, recompute the highlight offset on the collapsed string.** Computing offsets on the original and then collapsing shifts the highlight right by one per collapsed run — in practice far enough to land out of bounds.
+- **A local vector service must be addressed as `localhost`, never `127.0.0.1`.** An https page requesting `http://127.0.0.1` is blocked by the mixed-content policy; `localhost` is a potentially-trustworthy origin and is allowed. Same service, same port — the spelling is the difference between working and not.
+- **Retrieval substitutes a dot product for cosine similarity, which requires L2-normalised vectors.** llama.cpp needs `--embd-normalize 2`; drop it and the ranking degrades silently. Indexing checks the magnitude of the first batch and fails loudly instead of returning wrong results.
+- **Do not filter retrieval results by a similarity threshold.** Measured on bge-m3, the gap between "two related technical topics" and "technical vs. entirely unrelated" is only about 0.07 (0.651 vs 0.584). Any absolute cutoff misclassifies. Scores are shown honestly in the preview instead, so a human can judge.
+- **When retrieval fails, send nothing rather than silently dropping the material.** The user added those files on purpose; an answer that looks normal but never read them is far harder to notice than an error.
+- **Read `.epub` chapters in OPF spine order, not zip order.** Zip order is frequently scrambled, and concatenating it yields shuffled prose.
 
 ## License
 
@@ -258,6 +300,7 @@ notice; the software comes with no warranty.
 
 ## Not done yet
 
+- `.pdf` parsing for the knowledge base
 - Cross-canvas search (currently the active canvas only)
 - Sharing / multi-device sync (needs a backend; this is purely local right now)
 - Image and file input

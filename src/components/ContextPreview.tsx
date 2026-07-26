@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { useStore } from '../store/useStore';
 import { toast } from '../lib/toast';
 import { EXCLUDE_LABEL, explainContext } from '../lib/context';
 import { estimateMessageTokens, estimateTokens, formatTokens } from '../lib/tokens';
 import { pathToMarkdown } from '../lib/markdown';
+import type { RetrievedChunk } from '../lib/knowledge';
 import type { NodeRole } from '../types';
 
 const ROLE_LABEL: Record<NodeRole, string> = {
@@ -27,16 +28,57 @@ export function ContextPreview({ open, onClose }: { open: boolean; onClose: () =
   const select = useStore((s) => s.select);
   const profile = useStore((s) => s.activeProfile());
   const graphTitle = useStore((s) => s.graph?.title);
+  const retrieveKnowledge = useStore((s) => s.retrieveKnowledge);
+  const hasKnowledge = useStore((s) =>
+    s.knowledgeFiles.some((f) => f.enabled && f.status === 'ready'),
+  );
   const { setCenter } = useReactFlow();
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [hits, setHits] = useState<RetrievedChunk[] | null>(null);
+  const [retrieving, setRetrieving] = useState(false);
+  const [retrieveError, setRetrieveError] = useState<string | null>(null);
+
+  const base = useMemo(
+    () => ({ systemPrompt: settings.systemPrompt, limit: settings.contextLimit }),
+    [settings.systemPrompt, settings.contextLimit],
+  );
+
+  /** 这次会拿去检索的那句话。先算一遍不带知识库的上下文，取最后一条 user */
+  const query = useMemo(() => {
+    if (!nodes || !selectedId || !nodes[selectedId]) return '';
+    const entries = explainContext(nodes, selectedId, base).entries;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i]!.message.role === 'user') return entries[i]!.message.content;
+    }
+    return '';
+  }, [nodes, selectedId, base]);
+
+  /*
+   * 检索要发网络请求，只能异步做。面板打开时才跑 —— 预览是个随手看的东西，
+   * 不该在后台默默地一直向量化。
+   */
+  useEffect(() => {
+    if (!open || !hasKnowledge || !query.trim()) {
+      setHits(null);
+      setRetrieveError(null);
+      return;
+    }
+    let cancelled = false;
+    setRetrieving(true);
+    setRetrieveError(null);
+    retrieveKnowledge(query)
+      .then((result) => !cancelled && setHits(result))
+      .catch((err: unknown) => !cancelled && setRetrieveError((err as Error)?.message ?? String(err)))
+      .finally(() => !cancelled && setRetrieving(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [open, hasKnowledge, query, retrieveKnowledge]);
 
   const explained = useMemo(() => {
     if (!nodes || !selectedId || !nodes[selectedId]) return null;
-    return explainContext(nodes, selectedId, {
-      systemPrompt: settings.systemPrompt,
-      limit: settings.contextLimit,
-    });
-  }, [nodes, selectedId, settings.systemPrompt, settings.contextLimit]);
+    return explainContext(nodes, selectedId, { ...base, knowledge: hits ?? undefined });
+  }, [nodes, selectedId, base, hits]);
 
   if (!open || !explained || !nodes) return null;
 
@@ -111,9 +153,20 @@ export function ContextPreview({ open, onClose }: { open: boolean; onClose: () =
                 <li key={i} className={isOpen ? 'open' : ''}>
                   <div className="preview-msg-head" onClick={() => setExpanded(isOpen ? null : i)}>
                     <span className="preview-index">{i + 1}</span>
-                    <span className={`preview-role role-${role}`}>{MESSAGE_ROLE_LABEL[role]}</span>
+                    <span className={`preview-role role-${entry.knowledge ? 'knowledge' : role}`}>
+                      {entry.knowledge ? '知识库' : MESSAGE_ROLE_LABEL[role]}
+                    </span>
                     <span className="preview-tokens">≈{formatTokens(estimateTokens(content))}</span>
                     <span className="preview-sources">
+                      {entry.knowledge?.map((k) => (
+                        <span
+                          key={k.chunkId}
+                          className="preview-source static"
+                          title={`第 ${k.index + 1} 块 · 相似度 ${k.score.toFixed(3)}`}
+                        >
+                          《{k.fileName}》<b className="mono">{k.score.toFixed(2)}</b>
+                        </span>
+                      ))}
                       {entry.sourceIds.map((id) => (
                         <button
                           key={id}
@@ -141,6 +194,18 @@ export function ContextPreview({ open, onClose }: { open: boolean; onClose: () =
               );
             })}
           </ol>
+
+          {retrieving && <div className="preview-note">正在检索知识库…</div>}
+          {retrieveError && (
+            <div className="preview-note warn">
+              知识库检索失败，下面是<b>不带资料</b>的上下文。真正发送时也会失败并给出提示。
+              <br />
+              {retrieveError}
+            </div>
+          )}
+          {hits?.length === 0 && (
+            <div className="preview-note">知识库里没有检索到内容，这一发不会带资料。</div>
+          )}
 
           {trimmed > 0 && (
             <div className="preview-note">

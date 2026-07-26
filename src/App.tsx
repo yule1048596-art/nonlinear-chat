@@ -11,6 +11,7 @@ import { GraphDrawer } from './components/GraphDrawer';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SearchPalette } from './components/SearchPalette';
 import { SnapshotDrawer } from './components/SnapshotDrawer';
+import { KnowledgePanel } from './components/KnowledgePanel';
 import { ContextPreview } from './components/ContextPreview';
 import { BranchCompare } from './components/BranchCompare';
 import { AUTO_INTERVAL_MS } from './lib/snapshots';
@@ -20,6 +21,15 @@ function ContextBar({ onOpen }: { onOpen: () => void }) {
   const nodes = useStore((s) => s.graph?.nodes);
   const selectedId = useStore((s) => s.selectedId);
   const settings = useStore((s) => s.settings);
+  /*
+   * 知识库只能提示「会带」，给不出条数和 token —— 检索要发请求，
+   * 而这个条在打字时每帧都会重算。宁可标明这个数不含资料，
+   * 也不能让它显示一个和实际发送对不上的数字。
+   */
+  const knowledgeOn = useStore((s) =>
+    s.knowledgeFiles.some((f) => f.enabled && f.status === 'ready'),
+  );
+  const topK = useStore((s) => s.settings.embedding?.topK ?? 5);
 
   /*
    * 流式输出时 nodes 每 33ms 就换一个新对象，而算一次上下文要走完整祖先链
@@ -44,10 +54,21 @@ function ContextBar({ onOpen }: { onOpen: () => void }) {
   if (!stats) return null;
 
   return (
-    <button className="context-bar" onClick={onOpen} title="点开看实际会发出去的完整内容">
+    <button
+      className="context-bar"
+      onClick={onOpen}
+      title={
+        knowledgeOn
+          ? '点开看实际会发出去的完整内容。token 数不含知识库检索到的资料 —— 那要发送时才知道检索到哪几段'
+          : '点开看实际会发出去的完整内容'
+      }
+    >
       <span className="dot" />
       这一发会带上 <b>{stats.count}</b> 条消息
       {stats.hasSystem && ' + system'} · 约 <b>{formatTokens(stats.tokens)}</b> tokens
+      {knowledgeOn && (
+        <span className="context-bar-kb">＋知识库最多 {topK} 段（未计入）</span>
+      )}
       <span className="context-bar-hint">点开逐条查看</span>
     </button>
   );
@@ -95,6 +116,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
@@ -138,6 +160,8 @@ export default function App() {
         setGraphsOpen(false);
         setSettingsOpen(false);
         setPreviewOpen(false);
+        setSnapshotsOpen(false);
+        setKnowledgeOpen(false);
         useStore.getState().setCompare(null);
         return;
       }
@@ -171,6 +195,7 @@ export default function App() {
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenSearch={() => setSearchOpen(true)}
           onOpenSnapshots={() => setSnapshotsOpen(true)}
+          onOpenKnowledge={() => setKnowledgeOpen(true)}
         />
         <main className="canvas-wrap">
           <Canvas />
@@ -181,6 +206,7 @@ export default function App() {
         <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
         <SnapshotDrawer open={snapshotsOpen} onClose={() => setSnapshotsOpen(false)} />
+        <KnowledgePanel open={knowledgeOpen} onClose={() => setKnowledgeOpen(false)} />
         <ContextPreview open={previewOpen} onClose={() => setPreviewOpen(false)} />
         <BranchCompareHost />
         {toastMsg && <div className="toast">{toastMsg}</div>}

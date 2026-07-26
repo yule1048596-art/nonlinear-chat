@@ -274,6 +274,93 @@ describe('explainContext', () => {
   });
 });
 
+describe('知识库注入', () => {
+  const hit = (fileName: string, text: string, score = 0.7) => ({
+    chunkId: `c-${text}`,
+    fileId: 'f1',
+    fileName,
+    index: 0,
+    text,
+    score,
+  });
+
+  const convo = () =>
+    graph(
+      node('u1', 'user', '问一'),
+      node('a1', 'assistant', '答一', ['u1']),
+      node('u2', 'user', '问二', ['a1']),
+    );
+
+  it('没有命中时上下文和不传知识库时完全一样', () => {
+    const g = convo();
+    expect(buildContext(g, 'u2', { knowledge: [] })).toEqual(buildContext(g, 'u2'));
+  });
+
+  /** 紧挨着问题，模型不容易在长对话里把资料忘了 */
+  it('资料插在最后一条消息之前', () => {
+    const out = buildContext(convo(), 'u2', { knowledge: [hit('笔记.md', '资料内容')] });
+    expect(texts(out)).toEqual([
+      'user:问一',
+      'assistant:答一',
+      expect.stringContaining('system:'),
+      'user:问二',
+    ]);
+    expect(out[2]!.content).toContain('资料内容');
+  });
+
+  it('资料以 system 身份出现，不冒充用户说过的话', () => {
+    const out = buildContext(convo(), 'u2', { knowledge: [hit('笔记.md', '资料内容')] });
+    expect(out[2]!.role).toBe('system');
+    expect(out[3]!.content).toBe('问二'); // 用户自己的话没被污染
+  });
+
+  /** 这批资料是为这次提问检索的，被条数上限刷掉毫无道理 */
+  it('裁剪之后再插入，不会被 limit 刷掉', () => {
+    const out = buildContext(convo(), 'u2', { knowledge: [hit('笔记.md', '资料内容')], limit: 1 });
+    expect(texts(out)).toEqual([expect.stringContaining('system:'), 'user:问二']);
+    expect(out[0]!.content).toContain('资料内容');
+  });
+
+  it('只有一条消息时资料排在它前面', () => {
+    const out = buildContext(graph(node('u1', 'user', '问')), 'u1', {
+      knowledge: [hit('笔记.md', '资料内容')],
+    });
+    expect(out.map((m) => m.role)).toEqual(['system', 'user']);
+  });
+
+  it('和全局提示词共存，各占一条互不吞并', () => {
+    const out = buildContext(convo(), 'u2', {
+      systemPrompt: '你是助手',
+      knowledge: [hit('笔记.md', '资料内容')],
+    });
+    expect(out[0]!.content).toBe('你是助手');
+    expect(out[0]!.content).not.toContain('资料内容');
+    expect(out.filter((m) => m.role === 'system')).toHaveLength(2);
+  });
+
+  it('explainContext 把命中片段挂在那条消息上，预览能显示出处和分数', () => {
+    const hits = [hit('甲.md', '甲内容', 0.81), hit('乙.md', '乙内容', 0.62)];
+    const entry = explainContext(convo(), 'u2', { knowledge: hits }).entries.find((e) => e.knowledge);
+    expect(entry!.sourceIds).toEqual([]);
+    expect(entry!.knowledge!.map((k) => k.score)).toEqual([0.81, 0.62]);
+  });
+
+  /** 预览面板和实际发送必须同源，否则比没有预览更糟 */
+  it('带知识库时 buildContext 仍等于 explainContext 的 entries', () => {
+    const g = convo();
+    for (const opts of [
+      { knowledge: [hit('a.md', 'x')] },
+      { knowledge: [hit('a.md', 'x')], limit: 2 },
+      { knowledge: [hit('a.md', 'x')], systemPrompt: '提示' },
+      { knowledge: [] },
+    ]) {
+      expect(buildContext(g, 'u2', opts)).toEqual(
+        explainContext(g, 'u2', opts).entries.map((e) => e.message),
+      );
+    }
+  });
+});
+
 describe('migrateContextMode', () => {
   it('includeInContext=true 迁移成 include 并去掉旧字段', () => {
     const memo = node('n', 'note', '批注');

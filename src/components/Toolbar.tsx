@@ -13,6 +13,7 @@ export function Toolbar({
   onOpenSettings,
   onOpenSearch,
   onOpenSnapshots,
+  onOpenKnowledge,
 }: {
   themeMode: ThemeMode;
   onCycleTheme: () => void;
@@ -20,6 +21,7 @@ export function Toolbar({
   onOpenSettings: () => void;
   onOpenSearch: () => void;
   onOpenSnapshots: () => void;
+  onOpenKnowledge: () => void;
 }) {
   const graph = useStore((s) => s.graph);
   const renameGraph = useStore((s) => s.renameGraph);
@@ -32,6 +34,11 @@ export function Toolbar({
   const restoreBackup = useStore((s) => s.restoreBackup);
   const { getNodes, fitView } = useReactFlow();
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // 知识库开着的时候每一发都会带资料，这是会影响回答的事，得在顶栏看得见
+  const knowledgeCount = useStore(
+    (s) => s.knowledgeFiles.filter((f) => f.enabled && f.status === 'ready').length,
+  );
 
   // 画布上可以同时跑多个分支，但正在生成的节点可能在视野外，这里给个总数
   const streamingCount = useStore(
@@ -120,6 +127,13 @@ export function Toolbar({
         </button>
         <button className="btn" onClick={onOpenSnapshots} title="本地快照与回滚">
           快照
+        </button>
+        <button
+          className={knowledgeCount ? 'btn on' : 'btn'}
+          onClick={onOpenKnowledge}
+          title="这个画布的公用知识库"
+        >
+          知识库{knowledgeCount > 0 && ` · ${knowledgeCount}`}
         </button>
       </div>
 

@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { newProfile, useStore } from '../store/useStore';
 import { LlmError, PRESETS, listModels, streamChat } from '../lib/llm';
+import { DEFAULT_EMBEDDING, EmbeddingError, embedOne } from '../lib/embeddings';
 import { backupFilename } from '../lib/backup';
 import { downloadJson } from '../lib/download';
 import { toast } from '../lib/toast';
-import type { Profile } from '../types';
+import type { EmbeddingSettings, Profile } from '../types';
+
+const FALLBACK_EMBEDDING: EmbeddingSettings = { ...DEFAULT_EMBEDDING, topK: 5 };
 
 export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const settings = useStore((s) => s.settings);
@@ -21,6 +24,8 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
   // 默认不含 Key：导出文件最常见的用途是分享配置模板和换设备，带明文 Key 太容易泄漏
   const [includeKeys, setIncludeKeys] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [testingEmbed, setTestingEmbed] = useState(false);
+  const [embedResult, setEmbedResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
     if (open) setEditingId(settings.activeProfileId);
@@ -35,6 +40,31 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
 
   const profile = settings.profiles.find((p) => p.id === editingId) ?? settings.profiles[0]!;
   const patch = (changes: Partial<Profile>) => upsertProfile({ ...profile, ...changes });
+
+  const embedding = settings.embedding ?? FALLBACK_EMBEDDING;
+  const patchEmbedding = (changes: Partial<EmbeddingSettings>) =>
+    updateSettings({ embedding: { ...embedding, ...changes } });
+
+  const testEmbedding = async () => {
+    setTestingEmbed(true);
+    setEmbedResult(null);
+    try {
+      const vector = await embedOne(embedding, '连接测试');
+      setEmbedResult({ ok: true, text: `连通了，返回 ${vector.length} 维向量` });
+    } catch (err) {
+      setEmbedResult({
+        ok: false,
+        text:
+          err instanceof EmbeddingError
+            ? err.hint
+              ? `${err.message} —— ${err.hint}`
+              : err.message
+            : ((err as Error)?.message ?? String(err)),
+      });
+    } finally {
+      setTestingEmbed(false);
+    }
+  };
 
   const describe = (err: unknown) =>
     err instanceof LlmError
@@ -254,6 +284,67 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
             </label>
             <p className="hint">
               超出上限时丢弃最早的消息。0 表示把整条祖先链都发出去。
+            </p>
+          </section>
+
+          <section>
+            <h3>知识库向量服务</h3>
+            <p className="hint">
+              知识库靠它把文字变成向量来做语义检索，和上面聊天用的模型是两回事。
+              默认指向本地 llama.cpp 跑的 bge-m3。
+            </p>
+            <label>
+              Base URL
+              <input
+                value={embedding.baseUrl}
+                placeholder="http://localhost:8081/v1"
+                onChange={(e) => patchEmbedding({ baseUrl: e.target.value })}
+              />
+            </label>
+            {/* 实测过的坑：https 页面访问 http://127.0.0.1 会被混合内容策略拦掉，localhost 则放行 */}
+            {/127\.0\.0\.1|\[::1\]/.test(embedding.baseUrl) && (
+              <p className="hint warn">
+                请把 127.0.0.1 改成 <b>localhost</b>。浏览器会拦截 https 页面对 http://127.0.0.1
+                的请求，而 localhost 被当作可信来源不受此限。
+              </p>
+            )}
+            <label>
+              模型名
+              <input
+                value={embedding.model}
+                placeholder="text-embedding-bge-m3"
+                onChange={(e) => patchEmbedding({ model: e.target.value })}
+              />
+            </label>
+            <label>
+              API Key<span className="value">本地服务通常不需要</span>
+              <input
+                type="password"
+                value={embedding.apiKey}
+                placeholder="留空表示不发 Authorization 头"
+                onChange={(e) => patchEmbedding({ apiKey: e.target.value })}
+              />
+            </label>
+            <label>
+              每次检索取前 <span className="value">{embedding.topK} 块</span>
+              <input
+                type="range"
+                min={1}
+                max={12}
+                step={1}
+                value={embedding.topK}
+                onChange={(e) => patchEmbedding({ topK: Number(e.target.value) })}
+              />
+            </label>
+            <button className="btn block" disabled={testingEmbed} onClick={() => void testEmbedding()}>
+              {testingEmbed ? '连接中…' : '测试连接'}
+            </button>
+            {embedResult && (
+              <div className={embedResult.ok ? 'result ok' : 'result bad'}>{embedResult.text}</div>
+            )}
+            <p className="hint">
+              llama.cpp 启动时要加 <code>--embedding --embd-normalize 2</code>。
+              检索用点积代替余弦相似度，向量没归一化排序就会失真。
             </p>
           </section>
 

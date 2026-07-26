@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatNode, NodeRole } from '../types';
+import { formatKnowledgeBlock, type RetrievedChunk } from './knowledge';
 
 export type NodeMap = Record<string, ChatNode>;
 
@@ -166,6 +167,12 @@ export interface BuildContextOptions {
   systemPrompt?: string;
   /** 保留最近 N 条非 system 消息，0 或不传表示全量 */
   limit?: number;
+  /**
+   * 知识库检索到的片段。
+   * 检索本身要发网络请求，在外面做完再把结果传进来 ——
+   * 这个函数得保持同步且无副作用，预览面板才能随手调。
+   */
+  knowledge?: RetrievedChunk[];
 }
 
 export interface ContextEntry {
@@ -174,8 +181,11 @@ export interface ContextEntry {
    * 这条消息来自哪些节点。
    * 通常是一个；system 那条可能由多个 system 节点合并而来，
    * 若还带了全局提示词则数组会比实际来源少一项。
+   * 知识库注入的那条不来自任何节点，这里是空数组。
    */
   sourceIds: string[];
+  /** 知识库注入的消息带上命中的片段，预览面板据此显示出处和分数 */
+  knowledge?: RetrievedChunk[];
 }
 
 export interface ExcludedNode {
@@ -245,6 +255,21 @@ export function explainContext(
       body.shift();
       trimmed++;
     }
+  }
+
+  /*
+   * 知识库插在最后一条消息之前，而不是并进开头那条 system。
+   * 两个原因：紧挨着问题模型不容易在长对话里把资料忘了；
+   * 单独一条也让预览面板能把它和用户自己的话分开显示。
+   * 放在裁剪之后 —— 这批资料是为这次提问检索的，被条数上限刷掉毫无道理。
+   */
+  const block = formatKnowledgeBlock(options.knowledge ?? []);
+  if (block) {
+    body.splice(Math.max(0, body.length - 1), 0, {
+      message: { role: 'system', content: block },
+      sourceIds: [],
+      knowledge: options.knowledge,
+    });
   }
 
   const entries: ContextEntry[] = [];

@@ -72,6 +72,52 @@ export interface Settings {
   systemPrompt: string;
   /** 发送前把上下文里超过这个数量的最早消息丢掉，0 表示不限制 */
   contextLimit: number;
+  /** 知识库用的向量服务。默认指向本地 llama.cpp */
+  embedding?: EmbeddingSettings;
+}
+
+export interface EmbeddingSettings {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  /** 每次提问检索前几块塞进上下文 */
+  topK: number;
+}
+
+/**
+ * 知识库里的一个文件。
+ * 归属于画布 —— 知识库是「当前画布内所有对话共享」的，换个画布就是另一套资料。
+ */
+export interface KnowledgeFile {
+  id: string;
+  graphId: string;
+  name: string;
+  kind: 'text' | 'markdown' | 'docx' | 'epub';
+  /** 原始文件字节数 */
+  size: number;
+  /** 解析出的正文字数 */
+  charCount: number;
+  chunkCount: number;
+  /** 用户可以逐个文件开关，不必删了重建 */
+  enabled: boolean;
+  createdAt: number;
+  status: 'indexing' | 'ready' | 'error';
+  /** 索引失败的原因，失败的文件保留在列表里以便重试 */
+  error?: string;
+  /** 解析成功但有部分内容没读出来（比如 epub 的某几章） */
+  warning?: string;
+  /** 建库时用的向量模型。换模型后旧向量不可比，要能看出来 */
+  embeddingModel?: string;
+}
+
+/** 切块 + 向量。和 knowledge.ts 的 StoredChunk 结构兼容，多带一个 graphId 便于按画布清理 */
+export interface KnowledgeChunk {
+  id: string;
+  graphId: string;
+  fileId: string;
+  index: number;
+  text: string;
+  embedding: Float32Array;
 }
 
 export interface ChatMessage {
