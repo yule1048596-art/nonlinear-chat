@@ -122,9 +122,13 @@ Or just use the [hosted version](https://yule1048596-art.github.io/nonlinear-cha
 
 Anything that implements the OpenAI `/chat/completions` protocol. Built-in presets fill in the base URL for you:
 
-Xiaomi MiMo · OpenAI · DeepSeek · OpenRouter · SiliconFlow · Moonshot · Zhipu GLM · local Ollama
+Xiaomi MiMo · xAI Grok · OpenAI · DeepSeek · OpenRouter · SiliconFlow · Moonshot · Zhipu GLM · local Ollama
 
 Any other base URL can be typed in manually. You can store **several profiles** and use different models on different branches.
+
+> **A chat subscription is not API access.** SuperGrok, ChatGPT Plus and Claude Pro only cover the vendors' own
+> web and mobile apps — they include no API quota and cannot be used here. To reach Grok you need a separate
+> API key from [console.x.ai](https://console.x.ai), billed per token.
 
 ### CORS
 

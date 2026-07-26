@@ -120,9 +120,13 @@ npm run dev
 
 任何实现了 OpenAI `/chat/completions` 协议的服务都能接。设置里内置预设，选一个就自动填好 Base URL：
 
-小米 MiMo · OpenAI · DeepSeek · OpenRouter · 硅基流动 · Moonshot · 智谱 GLM · 本地 Ollama
+小米 MiMo · xAI Grok · OpenAI · DeepSeek · OpenRouter · 硅基流动 · Moonshot · 智谱 GLM · 本地 Ollama
 
 也可以手填任意 Base URL。可以存**多套配置**，在不同分支上跑不同模型做横向对比。
+
+> **聊天订阅不等于 API。** SuperGrok、ChatGPT Plus、Claude Pro 这类消费端订阅只能用官方的网页和 App，
+> 不含 API 额度，也没法在这里用。要接 Grok 得单独去 [console.x.ai](https://console.x.ai) 申请 API Key，
+> 按 token 另行计费。
 
 ### CORS 提醒
 

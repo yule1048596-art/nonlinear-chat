@@ -186,6 +186,8 @@ export async function listModels(profile: Pick<Profile, 'baseUrl' | 'apiKey'>): 
 
 export const PRESETS: Array<{ name: string; baseUrl: string; model: string }> = [
   { name: '小米 MiMo', baseUrl: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2.5-pro' },
+  // 注意：这里要的是 console.x.ai 的 API Key，和 SuperGrok 订阅是两回事，互不相通
+  { name: 'xAI Grok', baseUrl: 'https://api.x.ai/v1', model: 'grok-4.5' },
   { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o' },
   { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
   { name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'anthropic/claude-sonnet-4.5' },
