@@ -223,6 +223,10 @@ npm i -D puppeteer && node scripts/screenshot.mjs && npm un -D puppeteer
 - **悬停才出现的操作条必须始终占位**，否则悬停瞬间节点高度变化，连线会跟着抽动。用 `opacity` 而不是 `display`。
 - **GitHub Pages 工作流的 `concurrency` 不能用 `cancel-in-progress: true`。** 在真正发布的中途掐断任务，GitHub 会卡在 `updating_pages` 出不来，导致后续所有部署一路轮询到超时。
 
+## 许可证
+
+[MIT](LICENSE) —— 随便用、随便改、随便商用，保留版权声明即可，作者不担保。
+
 ## 还没做
 
 - 跨画布搜索（现在只搜当前画布）

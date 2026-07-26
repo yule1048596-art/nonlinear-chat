@@ -225,6 +225,11 @@ These all took real time to track down:
 - **A hover-revealed action bar must always occupy its space**, or the node's height changes on hover and the edges twitch. Control it with `opacity`, not `display`.
 - **A GitHub Pages workflow must not use `concurrency: cancel-in-progress: true`.** Cancelling a run mid-publish leaves GitHub stuck in `updating_pages`, and every later deploy then polls until it times out.
 
+## License
+
+[MIT](LICENSE) — use it, modify it, ship it commercially. Keep the copyright
+notice; the software comes with no warranty.
+
 ## Not done yet
 
 - Cross-canvas search (currently the active canvas only)
