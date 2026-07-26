@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatNode } from '../types';
+import type { ChatMessage, ChatNode, NodeRole } from '../types';
 
 export type NodeMap = Record<string, ChatNode>;
 
@@ -102,11 +102,52 @@ export function topoOrder(nodes: NodeMap, targetId: string): ChatNode[] {
   return ordered;
 }
 
+/** 这个角色默认进不进上下文。批注是画布上的备忘，默认不进 */
+export function inContextByDefault(role: NodeRole): boolean {
+  return role !== 'note';
+}
+
+/**
+ * 节点当前实际进不进上下文（不考虑内容是否为空）。
+ * UI 用它显示状态，participates 在此基础上再排除空节点和出错节点。
+ */
+export function isInContext(node: ChatNode): boolean {
+  if (node.contextMode === 'include') return true;
+  if (node.contextMode === 'exclude') return false;
+  return inContextByDefault(node.role);
+}
+
 /** 决定一个节点是否参与上下文 */
 function participates(node: ChatNode): boolean {
-  if (node.role === 'note') return node.includeInContext === true;
+  if (node.contextMode === 'exclude') return false;
+  /*
+   * 空节点永远跳过，且这条要排在 include 前面 ——「重新生成前先把内容清空」
+   * 正是靠它把自己排除出自己的上下文，让首次生成和重新生成共用一条代码路径。
+   * 若 include 能强行把空节点塞进去，那条路径就断了。
+   */
+  if (!node.content.trim()) return false;
   if (node.status === 'error') return false;
-  return node.content.trim().length > 0;
+  if (node.contextMode === 'include') return true;
+  return inContextByDefault(node.role);
+}
+
+/**
+ * 把旧数据里的 includeInContext 迁移成 contextMode。
+ * 加载画布时跑一次即可；已经有 contextMode 的节点不动。
+ */
+export function migrateContextMode(nodes: NodeMap): NodeMap {
+  let changed = false;
+  const out: NodeMap = {};
+  for (const [id, node] of Object.entries(nodes)) {
+    if (node.contextMode !== undefined || node.includeInContext === undefined) {
+      out[id] = node;
+      continue;
+    }
+    const { includeInContext, ...rest } = node;
+    out[id] = { ...rest, contextMode: includeInContext ? 'include' : 'auto' };
+    changed = true;
+  }
+  return changed ? out : nodes;
 }
 
 export interface BuildContextOptions {
@@ -134,7 +175,7 @@ export function buildContext(
     if (node.role === 'system') {
       systemParts.push(node.content.trim());
     } else {
-      // note 走到这里说明用户勾了「参与上下文」，当成 user 发言
+      // 批注走到这里说明被显式设成了 include，当成 user 发言
       body.push({
         role: node.role === 'assistant' ? 'assistant' : 'user',
         content: node.content,

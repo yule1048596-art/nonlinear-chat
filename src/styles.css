@@ -1508,6 +1508,36 @@ body.is-connecting .handle {
   color: var(--text-3);
 }
 
+/* 静音节点：留在画布上，但一眼看得出不会被发出去 */
+.node.is-muted .node-body,
+.node.is-muted .role-badge {
+  opacity: 0.5;
+}
+
+.node.is-muted {
+  border-style: dashed;
+}
+
+.context-badge {
+  margin-left: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.context-badge.on {
+  background: color-mix(in srgb, var(--assistant) 14%, transparent);
+  color: var(--assistant);
+  border: 1px solid color-mix(in srgb, var(--assistant) 30%, transparent);
+}
+
+.context-badge.off {
+  background: var(--surface-3);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+}
+
 /* 折叠徽章：常驻可见，因为它说明的是「下面还有内容」这个当前状态 */
 .subtree-badge {
   display: inline-flex;

@@ -3,6 +3,8 @@ import {
   buildContext,
   collectDescendants,
   computeHidden,
+  isInContext,
+  migrateContextMode,
   topoOrder,
   wouldCreateCycle,
 } from './context';
@@ -105,13 +107,13 @@ describe('buildContext', () => {
     expect(texts(buildContext(g, 'a1'))).toEqual(['user:问一']);
   });
 
-  it('批注默认不进上下文，勾选后作为 user 消息进', () => {
+  it('批注默认不进上下文，设为 include 后作为 user 消息进', () => {
     const first = node('u1', 'user', '问一');
     const memo = node('n', 'note', '记一笔：注意并发'); // 建得比 u1 晚，所以排在它后面
     const g = graph(first, memo, node('u2', 'user', '问二', ['u1', 'n']));
     expect(texts(buildContext(g, 'u2'))).toEqual(['user:问一', 'user:问二']);
 
-    memo.includeInContext = true;
+    memo.contextMode = 'include';
     expect(texts(buildContext(g, 'u2'))).toEqual([
       'user:问一',
       'user:记一笔：注意并发',
@@ -119,6 +121,35 @@ describe('buildContext', () => {
     ]);
   });
 
+  it('任意角色都能被静音', () => {
+    const bad = node('a1', 'assistant', '这个回答是错的', ['u1']);
+    const g = graph(node('u1', 'user', '问一'), bad, node('u2', 'user', '再问', ['a1']));
+    expect(texts(buildContext(g, 'u2'))).toEqual(['user:问一', 'assistant:这个回答是错的', 'user:再问']);
+
+    bad.contextMode = 'exclude';
+    expect(texts(buildContext(g, 'u2'))).toEqual(['user:问一', 'user:再问']);
+  });
+
+  it('静音优先级高于一切，system 也能被静音', () => {
+    const sys = node('s', 'system', '设定');
+    sys.contextMode = 'exclude';
+    const g = graph(sys, node('u1', 'user', '问一', ['s']));
+    expect(texts(buildContext(g, 'u1'))).toEqual(['user:问一']);
+  });
+
+  /**
+   * 「空节点永远跳过」必须优先于 include，否则重新生成会断：
+   * run() 靠先清空内容把节点排除出它自己的上下文。
+   */
+  it('include 不能把空节点强行塞进上下文', () => {
+    const blank = node('a1', 'assistant', '', ['u1']);
+    blank.contextMode = 'include';
+    const g = graph(node('u1', 'user', '问一'), blank);
+    expect(texts(buildContext(g, 'a1'))).toEqual(['user:问一']);
+  });
+});
+
+describe('buildContext · 其余', () => {
   it('出错的节点不会把报错内容带进下一轮', () => {
     const bad = node('a1', 'assistant', '限流了', ['u1']);
     bad.status = 'error';
@@ -159,6 +190,53 @@ describe('buildContext', () => {
   it('limit 大于实际条数时原样返回', () => {
     const g = graph(node('u1', 'user', '问一'), node('a1', 'assistant', '答一', ['u1']));
     expect(texts(buildContext(g, 'a1', { limit: 99 }))).toEqual(['user:问一', 'assistant:答一']);
+  });
+});
+
+describe('migrateContextMode', () => {
+  it('includeInContext=true 迁移成 include 并去掉旧字段', () => {
+    const memo = node('n', 'note', '批注');
+    memo.includeInContext = true;
+    const out = migrateContextMode(graph(memo));
+    expect(out.n!.contextMode).toBe('include');
+    expect('includeInContext' in out.n!).toBe(false);
+  });
+
+  it('includeInContext=false 迁移成 auto', () => {
+    const memo = node('n', 'note', '批注');
+    memo.includeInContext = false;
+    expect(migrateContextMode(graph(memo)).n!.contextMode).toBe('auto');
+  });
+
+  it('没有旧字段的节点原样返回同一个对象引用', () => {
+    const g = graph(node('u1', 'user', '问一'));
+    expect(migrateContextMode(g)).toBe(g);
+  });
+
+  it('已经有 contextMode 的不被旧字段覆盖', () => {
+    const n1 = node('n', 'note', '批注');
+    n1.includeInContext = true;
+    n1.contextMode = 'exclude';
+    expect(migrateContextMode(graph(n1)).n!.contextMode).toBe('exclude');
+  });
+});
+
+describe('isInContext', () => {
+  it('按角色给出默认值', () => {
+    expect(isInContext(node('u', 'user', 'x'))).toBe(true);
+    expect(isInContext(node('a', 'assistant', 'x'))).toBe(true);
+    expect(isInContext(node('s', 'system', 'x'))).toBe(true);
+    expect(isInContext(node('n', 'note', 'x'))).toBe(false);
+  });
+
+  it('显式设置覆盖默认值', () => {
+    const memo = node('n', 'note', 'x');
+    memo.contextMode = 'include';
+    expect(isInContext(memo)).toBe(true);
+
+    const user = node('u', 'user', 'x');
+    user.contextMode = 'exclude';
+    expect(isInContext(user)).toBe(false);
   });
 });
 

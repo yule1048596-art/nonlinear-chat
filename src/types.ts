@@ -1,5 +1,7 @@
 export type NodeRole = 'system' | 'user' | 'assistant' | 'note';
 
+export type ContextMode = 'auto' | 'include' | 'exclude';
+
 export type NodeStatus = 'idle' | 'streaming' | 'error';
 
 export interface ChatNode {
@@ -20,7 +22,14 @@ export interface ChatNode {
   collapsed?: boolean;
   /** 折叠整棵下游子树。与 collapsed 是两回事：那个只收起本节点的正文 */
   subtreeCollapsed?: boolean;
-  /** note 节点默认不进上下文；把它设为 true 可以让批注参与对话 */
+  /**
+   * 这个节点进不进上下文。
+   * - `auto`（默认）按角色决定：批注不进，其余都进
+   * - `include` 强制进（让某条批注参与对话）
+   * - `exclude` 静音（回答错了想留着看，但别带进下一轮）
+   */
+  contextMode?: ContextMode;
+  /** @deprecated 已被 contextMode 取代，加载时会迁移。仅为兼容旧数据保留 */
   includeInContext?: boolean;
   /** 生成这条消息用的配置档，便于在不同分支上对比模型 */
   profileId?: string;

@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useStore } from '../store/useStore';
 import { toast } from '../lib/toast';
+import { inContextByDefault, isInContext } from '../lib/context';
 import type { NodeRole } from '../types';
 import { ContextMenu, type MenuAnchor } from './ContextMenu';
 import { Markdown } from './Markdown';
@@ -119,6 +120,9 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
   };
   const isText = node.role !== 'assistant';
   const collapsed = node.collapsed;
+  const nodeInContext = isInContext(node);
+  // 只有「和该角色的默认行为不一致」时才值得在界面上标出来
+  const overridden = nodeInContext !== inContextByDefault(node.role);
 
   const classes = [
     'node',
@@ -126,6 +130,7 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
     selected ? 'is-selected' : '',
     inContext ? 'in-context' : '',
     dimmed ? 'is-dimmed' : '',
+    !nodeInContext ? 'is-muted' : '',
     streaming ? 'is-streaming' : '',
     node.status === 'error' ? 'is-error' : '',
   ]
@@ -154,6 +159,12 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
           </button>
         )}
         {streaming && <span className="pulse" title="生成中" />}
+        {/* 状态徽章常驻可见：它说明的是「这节点会不会被发出去」，藏起来等于没提示 */}
+        {overridden && (
+          <span className={nodeInContext ? 'context-badge on' : 'context-badge off'}>
+            {nodeInContext ? '已加入上下文' : '已静音'}
+          </span>
+        )}
         {/* 折叠徽章不随悬停隐藏：它是当前状态的说明，藏起来用户就不知道下面还有东西 */}
         {node.subtreeCollapsed && (
           <button
@@ -256,17 +267,20 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
             分支
           </button>
         )}
-        {node.role === 'note' && (
-          <label className="checkbox" title="勾选后这条批注会作为 user 消息进入上下文">
-            <input
-              type="checkbox"
-              checked={!!node.includeInContext}
-              onChange={(e) => updateNode(id, { includeInContext: e.target.checked })}
-            />
-            入上下文
-          </label>
-        )}
         <span className="spacer" />
+        <button
+          className="icon-btn"
+          title={
+            nodeInContext
+              ? '在上下文中 · 点击静音（留在画布上但不发出去）'
+              : node.role === 'note'
+                ? '批注默认不进上下文 · 点击让它参与'
+                : '已静音 · 点击恢复'
+          }
+          onClick={() => updateNode(id, { contextMode: nodeInContext ? 'exclude' : 'include' })}
+        >
+          {nodeInContext ? '◉' : '◌'}
+        </button>
         {hasChildren && (
           <button
             className="icon-btn"

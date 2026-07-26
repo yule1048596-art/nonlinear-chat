@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import type { ChatNode, Graph, GraphMeta, NodeRole, Profile, Settings } from '../types';
-import { buildContext, collectDescendants, wouldCreateCycle, type NodeMap } from '../lib/context';
+import {
+  buildContext,
+  collectDescendants,
+  migrateContextMode,
+  wouldCreateCycle,
+  type NodeMap,
+} from '../lib/context';
 import { emptyHistory, record, redo as redoStep, undo as undoStep, type StepResult } from '../lib/history';
 import { LlmError, streamChat } from '../lib/llm';
 import { placeChild, placeSibling } from '../lib/layout';
@@ -68,13 +74,17 @@ function emptyGraph(): Graph {
   };
 }
 
-/** 页面在流式输出中途被关掉，重开时状态会卡在 streaming，这里洗一遍 */
+/**
+ * 加载画布时的清洗：
+ * - 页面在流式输出中途被关掉，状态会卡在 streaming，统一洗成 idle
+ * - 旧数据的 includeInContext 迁移成 contextMode
+ */
 function sanitize(graph: Graph): Graph {
   const nodes: NodeMap = {};
   for (const [id, node] of Object.entries(graph.nodes ?? {})) {
     nodes[id] = node.status === 'streaming' ? { ...node, status: 'idle' } : node;
   }
-  return { ...graph, nodes };
+  return { ...graph, nodes: migrateContextMode(nodes) };
 }
 
 interface State {
