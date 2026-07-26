@@ -86,9 +86,20 @@ Everything else gets out of the way. Per-node action buttons are hidden until yo
 - Deleting a subtree tells you how many nodes went and that you can undo
 - Cycles are rejected with an explanation
 
+**Seeing the context**
+- Click the status bar to preview the exact `messages` that will be sent; every entry traces back to its node
+- A separate list shows nodes on the path that were *not* sent, with the reason
+- Any node can be muted: it stays on the canvas but leaves the downstream context
+- Export a path as a readable Markdown transcript
+
+**Not losing work**
+- Automatic local snapshots, always taken before deleting / importing / rolling back; restore everything or just one canvas
+- Settings and full-backup export; exports omit API keys by default
+- Importing settings merges profiles and never overwrites your own
+
 **Also**
 - Light/dark themes, following the system by default
-- Multiple model profiles — run different models on different branches to compare
+- Multiple model profiles — run different models on different branches; several answers to the same question can be compared side by side
 - Export/import a canvas as JSON
 
 ## Quick start
@@ -161,21 +172,29 @@ React 19 · TypeScript · Vite · [React Flow](https://reactflow.dev) · Zustand
 src/
 ├── types.ts              Data model
 ├── lib/
-│   ├── context.ts        DAG → message list + collapse visibility (core, tested)
+│   ├── context.ts        DAG → messages, provenance, collapse visibility (core, tested)
 │   ├── history.ts        Undo stack (pure functions, tested)
+│   ├── snapshots.ts      Snapshot signatures, dedup and pruning (tested)
+│   ├── backup.ts         Export packaging and settings merge (tested)
+│   ├── markdown.ts       Path export and sibling lookup (tested)
+│   ├── search.ts         Node search with excerpt offsets (tested)
 │   ├── tokens.ts         Token estimation (tested)
+│   ├── llm.ts            OpenAI-compatible streaming client (tested)
+│   ├── db.ts             IndexedDB + debounced save with maxWait (tested)
 │   ├── autoLayout.ts     dagre layered layout
-│   ├── llm.ts            OpenAI-compatible streaming client (SSE parsing, error attribution)
-│   ├── db.ts             IndexedDB + debounced save with maxWait
 │   ├── layout.ts         Collision-avoiding placement for new nodes
 │   ├── theme.ts          Light/dark themes
-│   └── toast.ts          Module-level notifications
-├── store/useStore.ts     zustand: all graph mutations + streaming + undo
+│   ├── toast.ts          Module-level notifications
+│   └── download.ts       File download helper
+├── store/useStore.ts     zustand: graph mutations, streaming, undo, snapshots, backup
 └── components/
     ├── Canvas.tsx        React Flow integration, context highlighting, cycle checks, collapse
     ├── MessageNode.tsx   Node card
-    ├── SearchPalette.tsx ⌘K search
-    ├── ContextMenu.tsx   Right-click / role-switch menu
+    ├── ContextPreview.tsx Real request-body preview and path export
+    ├── BranchCompare.tsx  Side-by-side comparison of answers to one question
+    ├── SnapshotDrawer.tsx Snapshot list and rollback
+    ├── SearchPalette.tsx  ⌘K search
+    ├── ContextMenu.tsx    Right-click / role-switch menu
     └── Toolbar.tsx / GraphDrawer.tsx / SettingsPanel.tsx / Markdown.tsx
 ```
 
@@ -185,7 +204,7 @@ src/
 npm test
 ```
 
-61 tests covering DAG topological ordering, multi-parent merging, diamond deduplication, cycle detection, context trimming, collapse-visibility propagation, undo-stack coalescing and limits, token estimation, search-excerpt offsets, and debounced-save timing.
+146 tests covering DAG topological ordering, multi-parent merging, diamond deduplication, cycle detection, context trimming, collapse-visibility propagation, undo-stack coalescing and limits, token estimation, search-excerpt offsets, debounced-save timing, SSE stream parsing, snapshot dedup and pruning, backup merging, and path export.
 
 To debug without spending real API credits, use the fake server in the repo:
 
@@ -238,6 +257,5 @@ notice; the software comes with no warranty.
 - Cross-canvas search (currently the active canvas only)
 - Sharing / multi-device sync (needs a backend; this is purely local right now)
 - Image and file input
-- Exporting/importing settings (canvases already export)
 - Keyboard navigation between nodes
 - **Internationalising the UI itself** — the interface is Chinese-only so far

@@ -12,6 +12,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { SearchPalette } from './components/SearchPalette';
 import { SnapshotDrawer } from './components/SnapshotDrawer';
 import { ContextPreview } from './components/ContextPreview';
+import { BranchCompare } from './components/BranchCompare';
 import { AUTO_INTERVAL_MS } from './lib/snapshots';
 
 /** 选中节点时告诉用户「这一发到底会带多少上下文」—— 非线性对话最容易失控的就是这个 */
@@ -77,6 +78,13 @@ function EmptyHint() {
   );
 }
 
+/** 对比面板的开关在 store 里，单独包一层免得 App 为它整体重渲染 */
+function BranchCompareHost() {
+  const compareNodeId = useStore((s) => s.compareNodeId);
+  const setCompare = useStore((s) => s.setCompare);
+  return <BranchCompare nodeId={compareNodeId} onClose={() => setCompare(null)} />;
+}
+
 export default function App() {
   const init = useStore((s) => s.init);
   const ready = useStore((s) => s.ready);
@@ -130,6 +138,7 @@ export default function App() {
         setGraphsOpen(false);
         setSettingsOpen(false);
         setPreviewOpen(false);
+        useStore.getState().setCompare(null);
         return;
       }
       if (!(e.metaKey || e.ctrlKey)) return;
@@ -173,6 +182,7 @@ export default function App() {
         <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
         <SnapshotDrawer open={snapshotsOpen} onClose={() => setSnapshotsOpen(false)} />
         <ContextPreview open={previewOpen} onClose={() => setPreviewOpen(false)} />
+        <BranchCompareHost />
         {toastMsg && <div className="toast">{toastMsg}</div>}
       </div>
     </ReactFlowProvider>

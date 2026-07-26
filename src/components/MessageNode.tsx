@@ -3,6 +3,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useStore } from '../store/useStore';
 import { toast } from '../lib/toast';
 import { inContextByDefault, isInContext } from '../lib/context';
+import { findSiblings } from '../lib/markdown';
 import type { NodeRole } from '../types';
 import { ContextMenu, type MenuAnchor } from './ContextMenu';
 import { Markdown } from './Markdown';
@@ -73,6 +74,7 @@ function AutoTextarea({
 
 export const MessageNode = memo(function MessageNode({ id, data, selected }: NodeProps) {
   const node = useStore((s) => s.graph?.nodes[id]);
+  const setCompare = useStore((s) => s.setCompare);
   const updateNode = useStore((s) => s.updateNode);
   const removeNode = useStore((s) => s.removeNode);
   const addChild = useStore((s) => s.addChild);
@@ -87,6 +89,10 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const streaming = node?.status === 'streaming';
+  // 只有存在「同一个问题的另一版回答」时，对比才有意义
+  const siblingCount = useStore((s) =>
+    s.graph ? findSiblings(s.graph.nodes, id).length : 0,
+  );
 
   // 流式输出时把视野钉在底部，除非用户自己往上滚了
   useEffect(() => {
@@ -260,6 +266,15 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
               >
                 并排
               </button>
+              {siblingCount > 1 && (
+                <button
+                  className="btn"
+                  onClick={() => setCompare(id)}
+                  title={`和同一个问题的另外 ${siblingCount - 1} 个回答并排比较`}
+                >
+                  对比 {siblingCount}
+                </button>
+              )}
             </>
           ))}
         {node.role !== 'assistant' && (

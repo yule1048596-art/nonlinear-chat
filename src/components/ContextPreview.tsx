@@ -4,6 +4,7 @@ import { useStore } from '../store/useStore';
 import { toast } from '../lib/toast';
 import { EXCLUDE_LABEL, explainContext } from '../lib/context';
 import { estimateMessageTokens, estimateTokens, formatTokens } from '../lib/tokens';
+import { pathToMarkdown } from '../lib/markdown';
 import type { NodeRole } from '../types';
 
 const ROLE_LABEL: Record<NodeRole, string> = {
@@ -25,6 +26,7 @@ export function ContextPreview({ open, onClose }: { open: boolean; onClose: () =
   const settings = useStore((s) => s.settings);
   const select = useStore((s) => s.select);
   const profile = useStore((s) => s.activeProfile());
+  const graphTitle = useStore((s) => s.graph?.title);
   const { setCenter } = useReactFlow();
   const [expanded, setExpanded] = useState<number | null>(null);
 
@@ -47,6 +49,22 @@ export function ContextPreview({ open, onClose }: { open: boolean; onClose: () =
     select(nodeId);
     setCenter(node.position.x + 190, node.position.y + 100, { zoom: 1, duration: 320 });
     onClose();
+  };
+
+  const exportMarkdown = () => {
+    if (!nodes || !selectedId) return;
+    const md = pathToMarkdown(nodes, selectedId, {
+      title: graphTitle,
+      systemPrompt: settings.systemPrompt,
+    });
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(graphTitle || '对话记录').replace(/[/\\:*?"<>|]/g, '_')}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('已导出这条路径的 Markdown');
   };
 
   const copyPayload = () => {
@@ -76,6 +94,9 @@ export function ContextPreview({ open, onClose }: { open: boolean; onClose: () =
           </span>
           <span className="mono preview-model">{profile.model}</span>
           <span className="spacer" />
+          <button className="btn" onClick={exportMarkdown} title="把这条路径导成可读的 Markdown">
+            导出 Markdown
+          </button>
           <button className="btn solid" onClick={copyPayload}>
             复制请求体
           </button>

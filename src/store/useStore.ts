@@ -117,6 +117,9 @@ interface State {
   importGraph: (graph: Graph) => Promise<void>;
 
   select: (id: string | null) => void;
+  /** 正在对比的节点。放 store 而非 node.data，否则会破坏 Canvas 的节点对象缓存 */
+  compareNodeId: string | null;
+  setCompare: (id: string | null) => void;
   updateNode: (id: string, patch: Partial<ChatNode>) => void;
   moveNode: (id: string, position: { x: number; y: number }) => void;
   /** 返回实际删掉的节点数，调用方用它提示「删了 N 个，⌘Z 可撤销」 */
@@ -371,6 +374,7 @@ export const useStore = create<State>((set, get) => {
     snapshots: [],
     settings: DEFAULT_SETTINGS,
     selectedId: null,
+    compareNodeId: null,
     ready: false,
     canUndo: false,
     canRedo: false,
@@ -484,6 +488,10 @@ export const useStore = create<State>((set, get) => {
 
     select(id) {
       set({ selectedId: id });
+    },
+
+    setCompare(id) {
+      set({ compareNodeId: id });
     },
 
     updateNode(id, patch) {

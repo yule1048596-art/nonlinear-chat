@@ -2023,3 +2023,100 @@ body.is-connecting .handle {
   font-size: 12px;
   color: var(--text-2);
 }
+
+/* ============================================================
+   分支对比
+   ============================================================ */
+
+.compare {
+  position: fixed;
+  inset: 6vh 3vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-3);
+  z-index: 50;
+  overflow: hidden;
+  animation: palette-in 0.16s var(--ease);
+}
+
+.compare-head {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.compare-head h2 {
+  margin: 0;
+  flex: 1;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.compare-columns {
+  flex: 1;
+  display: flex;
+  gap: 1px;
+  background: var(--border);
+  overflow-x: auto;
+  min-height: 0;
+}
+
+.compare-col {
+  flex: 1 0 320px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  min-width: 0;
+}
+
+.compare-col.current {
+  background: var(--accent-soft);
+}
+
+.compare-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 6px;
+}
+
+.compare-index {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.compare-meta {
+  display: flex;
+  gap: 10px;
+  padding: 0 14px 8px;
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.compare-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.compare-col-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.compare-foot {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.6;
+}

@@ -86,9 +86,20 @@
 - 删除子树后弹提示告诉你删了几个、可以撤销
 - 连线成环会被拒绝并说明原因
 
+**看清上下文**
+- 点底部状态条打开预览，逐条列出实际会发出去的 `messages`，每条可溯源到节点
+- 单列「在这条路径上、但没发出去的节点」并写明原因
+- 任意节点可静音：留在画布上，但不进下游上下文
+- 一条路径可导出为 Markdown 对话记录
+
+**防丢失**
+- 自动本地快照，删画布 / 导入 / 回滚前必打点，可整份回滚或只捞回一个画布
+- 设置与全量备份导出，导出默认不含 API Key
+- 导入设置只合并、不覆盖已有配置
+
 **其他**
 - 亮 / 暗双主题，默认跟随系统
-- 多套模型配置，不同分支用不同模型横向对比
+- 多套模型配置，不同分支用不同模型横向对比；同一问题的多个回答可并排对比
 - 画布导出 / 导入 JSON
 
 ## 快速开始
@@ -159,21 +170,29 @@ React 19 · TypeScript · Vite · [React Flow](https://reactflow.dev) · Zustand
 src/
 ├── types.ts              数据模型
 ├── lib/
-│   ├── context.ts        DAG → 线性消息 + 折叠可见性（核心，有测试）
+│   ├── context.ts        DAG → 线性消息、上下文溯源、折叠可见性（核心，有测试）
 │   ├── history.ts        撤销栈（纯函数，有测试）
+│   ├── snapshots.ts      快照签名去重与淘汰策略（有测试）
+│   ├── backup.ts         导出打包与设置合并（有测试）
+│   ├── markdown.ts       路径导出、同源兄弟查找（有测试）
+│   ├── search.ts         节点内容搜索与摘要定位（有测试）
 │   ├── tokens.ts         token 估算（有测试）
+│   ├── llm.ts            OpenAI 兼容流式客户端（有测试）
+│   ├── db.ts             IndexedDB + 带 maxWait 的防抖存盘（有测试）
 │   ├── autoLayout.ts     dagre 分层排版
-│   ├── llm.ts            OpenAI 兼容流式客户端（SSE 解析、错误归因）
-│   ├── db.ts             IndexedDB + 带 maxWait 的防抖存盘
 │   ├── layout.ts         新节点自动避让排布
 │   ├── theme.ts          亮暗主题
-│   └── toast.ts          模块级提示
-├── store/useStore.ts     zustand：所有图变更 + 流式生成 + 撤销
+│   ├── toast.ts          模块级提示
+│   └── download.ts       触发文件下载
+├── store/useStore.ts     zustand：图变更 + 流式生成 + 撤销 + 快照 + 备份
 └── components/
     ├── Canvas.tsx        React Flow 集成、上下文高亮、连线校验、折叠
     ├── MessageNode.tsx   节点卡片
-    ├── SearchPalette.tsx ⌘K 搜索
-    ├── ContextMenu.tsx   右键 / 角色切换菜单
+    ├── ContextPreview.tsx 实际请求体预览与路径导出
+    ├── BranchCompare.tsx  同一问题多个回答并排对比
+    ├── SnapshotDrawer.tsx 快照列表与回滚
+    ├── SearchPalette.tsx  ⌘K 搜索
+    ├── ContextMenu.tsx    右键 / 角色切换菜单
     └── Toolbar.tsx / GraphDrawer.tsx / SettingsPanel.tsx / Markdown.tsx
 ```
 
@@ -183,7 +202,7 @@ src/
 npm test
 ```
 
-61 个测试，覆盖 DAG 拓扑排序、多父合并、菱形去重、成环检测、上下文裁剪、折叠可见性传播、撤销栈的合并与上限、token 估算、搜索摘要偏移、防抖存盘时序。
+146 个测试，覆盖 DAG 拓扑排序、多父合并、菱形去重、成环检测、上下文裁剪、折叠可见性传播、撤销栈的合并与上限、token 估算、搜索摘要偏移、防抖存盘时序、SSE 流式解析、快照去重与淘汰、备份合并、路径导出。
 
 不想花真实 API 额度调试时，用仓库里的假服务端：
 
@@ -235,5 +254,5 @@ npm i -D puppeteer && node scripts/screenshot.mjs && npm un -D puppeteer
 - 跨画布搜索（现在只搜当前画布）
 - 画布分享 / 多端同步（需要后端，当前是纯本地架构）
 - 图片、附件等多模态输入
-- 设置的导出导入（画布可以导出，设置还不行）
 - 键盘在节点间导航
+- UI 国际化（界面目前只有中文）
