@@ -10,6 +10,8 @@ import { Toolbar } from './components/Toolbar';
 import { GraphDrawer } from './components/GraphDrawer';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SearchPalette } from './components/SearchPalette';
+import { SnapshotDrawer } from './components/SnapshotDrawer';
+import { AUTO_INTERVAL_MS } from './lib/snapshots';
 
 /** 选中节点时告诉用户「这一发到底会带多少上下文」—— 非线性对话最容易失控的就是这个 */
 function ContextBar() {
@@ -79,9 +81,11 @@ export default function App() {
   const ready = useStore((s) => s.ready);
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
+  const takeSnapshot = useStore((s) => s.takeSnapshot);
   const [graphsOpen, setGraphsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [snapshotsOpen, setSnapshotsOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -89,6 +93,18 @@ export default function App() {
   useEffect(() => {
     void init();
   }, [init]);
+
+  /*
+   * 周期性自动快照。takeSnapshot 内部会在内容没变时跳过，所以这里定时器
+   * 打得比实际存盘频繁没关系。ready 之前不能打——那时还没读出数据，
+   * 会存下一份空的把有用的挤出保留窗口。
+   */
+  useEffect(() => {
+    if (!ready) return;
+    void takeSnapshot('自动');
+    const timer = setInterval(() => void takeSnapshot('自动'), AUTO_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [ready, takeSnapshot]);
 
   useEffect(() => {
     applyThemeMode(themeMode);
@@ -142,6 +158,7 @@ export default function App() {
           onOpenGraphs={() => setGraphsOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenSearch={() => setSearchOpen(true)}
+          onOpenSnapshots={() => setSnapshotsOpen(true)}
         />
         <main className="canvas-wrap">
           <Canvas />
@@ -151,6 +168,7 @@ export default function App() {
         <GraphDrawer open={graphsOpen} onClose={() => setGraphsOpen(false)} />
         <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
+        <SnapshotDrawer open={snapshotsOpen} onClose={() => setSnapshotsOpen(false)} />
         {toastMsg && <div className="toast">{toastMsg}</div>}
       </div>
     </ReactFlowProvider>

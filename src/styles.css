@@ -1575,6 +1575,135 @@ body.is-connecting .handle {
 }
 
 /* ============================================================
+   快照面板
+   ============================================================ */
+
+.empty-list {
+  padding: 24px 10px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.snapshot-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.snapshot-list > li {
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  margin-bottom: 2px;
+}
+
+.snapshot-list > li.expanded {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+.snapshot-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.snapshot-list > li:not(.expanded) .snapshot-row:hover {
+  background: var(--surface-2);
+}
+
+.snapshot-tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.snapshot-tag.auto {
+  background: var(--surface-3);
+  color: var(--text-3);
+}
+
+.snapshot-tag.guard {
+  background: color-mix(in srgb, var(--note) 16%, transparent);
+  color: var(--note);
+}
+
+.snapshot-tag.manual {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.snapshot-when {
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.snapshot-meta {
+  font-size: 10.5px;
+  color: var(--text-3);
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.snapshot-detail {
+  padding: 0 10px 10px;
+}
+
+.snapshot-time {
+  font-size: 10.5px;
+  color: var(--text-3);
+  padding-bottom: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.snapshot-graphs {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  border-top: 1px solid var(--border);
+}
+
+.snapshot-graphs li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.snapshot-graph-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-graphs .snapshot-meta {
+  margin-left: 0;
+}
+
+.snapshot-detail .btn {
+  font-size: 11.5px;
+  padding: 4px 8px;
+}
+
+.btn.grow {
+  flex: 1;
+  justify-content: center;
+}
+
+/* ============================================================
    Toast
    ============================================================ */
 

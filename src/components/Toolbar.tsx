@@ -11,12 +11,14 @@ export function Toolbar({
   onOpenGraphs,
   onOpenSettings,
   onOpenSearch,
+  onOpenSnapshots,
 }: {
   themeMode: ThemeMode;
   onCycleTheme: () => void;
   onOpenGraphs: () => void;
   onOpenSettings: () => void;
   onOpenSearch: () => void;
+  onOpenSnapshots: () => void;
 }) {
   const graph = useStore((s) => s.graph);
   const renameGraph = useStore((s) => s.renameGraph);
@@ -98,6 +100,9 @@ export function Toolbar({
         </button>
         <button className="btn" onClick={tidy} title="按分层自动排版，可撤销">
           整理
+        </button>
+        <button className="btn" onClick={onOpenSnapshots} title="本地快照与回滚">
+          快照
         </button>
       </div>
 

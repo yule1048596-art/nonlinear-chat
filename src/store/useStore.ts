@@ -5,6 +5,14 @@ import { emptyHistory, record, redo as redoStep, undo as undoStep, type StepResu
 import { LlmError, streamChat } from '../lib/llm';
 import { placeChild, placeSibling } from '../lib/layout';
 import { computeLayout, isSameLayout } from '../lib/autoLayout';
+import {
+  buildSignature,
+  pruneIds,
+  shouldSnapshot,
+  type Snapshot,
+  type SnapshotMeta,
+  type SnapshotReason,
+} from '../lib/snapshots';
 import * as db from '../lib/db';
 
 const DEFAULT_SETTINGS: Settings = {
@@ -103,6 +111,16 @@ interface State {
   unlinkNodes: (from: string, to: string) => void;
   /** 一键整理布局。传入实测节点尺寸，返回是否真的动了 */
   applyLayout: (dimensions?: Map<string, { width: number; height: number }>) => boolean;
+
+  snapshots: SnapshotMeta[];
+  /** 打一个快照。返回是否真的存了（自动快照在内容没变时会跳过） */
+  takeSnapshot: (reason?: SnapshotReason) => Promise<boolean>;
+  refreshSnapshots: () => Promise<void>;
+  /** 整份回滚到某个快照。回滚本身也会先打一个「恢复前」的点 */
+  restoreSnapshot: (snapshotId: string) => Promise<boolean>;
+  /** 只从快照里捞回一个画布，不动其他数据 */
+  restoreGraphFromSnapshot: (snapshotId: string, graphId: string) => Promise<boolean>;
+  removeSnapshot: (snapshotId: string) => Promise<void>;
 
   send: (userNodeId: string) => Promise<void>;
   regenerate: (assistantId: string) => Promise<void>;
@@ -325,6 +343,7 @@ export const useStore = create<State>((set, get) => {
   return {
     graph: null,
     graphs: [],
+    snapshots: [],
     settings: DEFAULT_SETTINGS,
     selectedId: null,
     ready: false,
@@ -387,6 +406,8 @@ export const useStore = create<State>((set, get) => {
     },
 
     async removeGraph(id) {
+      // 删之前留一个回滚点
+      await get().takeSnapshot('删除画布前');
       // 必须先丢弃待写入：防抖存盘里可能还压着这个画布，删完定时器一到
       // 又会把它写回去，用户看到的就是「删了又自己回来了」
       saver.discard(id);
@@ -409,6 +430,7 @@ export const useStore = create<State>((set, get) => {
     },
 
     async importGraph(incoming) {
+      await get().takeSnapshot('导入前');
       // 换一套 id，避免和已有画布撞车
       const idMap = new Map<string, string>();
       for (const id of Object.keys(incoming.nodes)) idMap.set(id, uid());
@@ -557,6 +579,91 @@ export const useStore = create<State>((set, get) => {
       );
       set({ selectedId: id });
       return id;
+    },
+
+    async takeSnapshot(reason = '自动') {
+      // 落盘当前画布，否则快照里存的是磁盘上的旧版本
+      saver.flush();
+      const [graphs, latestList] = await Promise.all([db.loadAllGraphs(), db.listSnapshots()]);
+      const settings = get().settings;
+      const signature = buildSignature(graphs, settings);
+
+      const latest = latestList[0]
+        ? { signature: (await db.loadSnapshot(latestList[0].id))?.signature ?? '', createdAt: latestList[0].createdAt }
+        : undefined;
+
+      if (!shouldSnapshot({ reason, signature, latest, now: now() })) return false;
+
+      const snapshot: Snapshot = {
+        id: uid(),
+        createdAt: now(),
+        reason,
+        signature,
+        graphs,
+        settings,
+      };
+      await db.saveSnapshot(snapshot);
+
+      // 存完再淘汰，保证任何时刻都至少有一份可用的快照
+      const all = await db.listSnapshots();
+      for (const id of pruneIds(all)) await db.deleteSnapshot(id);
+
+      set({ snapshots: await db.listSnapshots() });
+      return true;
+    },
+
+    async refreshSnapshots() {
+      set({ snapshots: await db.listSnapshots() });
+    },
+
+    async restoreSnapshot(snapshotId) {
+      const snapshot = await db.loadSnapshot(snapshotId);
+      if (!snapshot) return false;
+
+      // 回滚也是破坏性的：先给当前状态留一个回头路
+      await get().takeSnapshot('恢复前');
+
+      saver.flush();
+      await db.replaceAllGraphs(snapshot.graphs);
+      await db.saveSettings(snapshot.settings);
+
+      resetHistory(); // 历史属于被替换掉的那份数据，留着会串台
+      const first = snapshot.graphs[0];
+      if (first) await db.saveLastGraphId(first.id);
+
+      set({
+        settings: snapshot.settings,
+        graph: first ? sanitize(first) : emptyGraph(),
+        selectedId: null,
+        graphs: await db.listGraphs(),
+        snapshots: await db.listSnapshots(),
+      });
+      return true;
+    },
+
+    async restoreGraphFromSnapshot(snapshotId, graphId) {
+      const snapshot = await db.loadSnapshot(snapshotId);
+      const target = snapshot?.graphs.find((g) => g.id === graphId);
+      if (!target) return false;
+
+      await get().takeSnapshot('恢复前');
+      saver.flush();
+      await db.saveGraph(target);
+      await db.saveLastGraphId(target.id);
+      resetHistory();
+
+      set({
+        graph: sanitize(target),
+        selectedId: null,
+        graphs: await db.listGraphs(),
+        snapshots: await db.listSnapshots(),
+      });
+      return true;
+    },
+
+    async removeSnapshot(snapshotId) {
+      await db.deleteSnapshot(snapshotId);
+      set({ snapshots: await db.listSnapshots() });
     },
 
     applyLayout(dimensions) {

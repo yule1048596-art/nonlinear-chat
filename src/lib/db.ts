@@ -1,15 +1,20 @@
 import { openDB, type IDBPDatabase } from 'idb';
 import type { Graph, GraphMeta, Settings } from '../types';
+import { toMeta, type Snapshot, type SnapshotMeta } from './snapshots';
 
 const DB_NAME = 'nonlinear-chat';
-const DB_VERSION = 1;
+/** v2 加了 snapshots 表。升级只新建表，不动既有数据 */
+const DB_VERSION = 2;
 const GRAPHS = 'graphs';
 const KV = 'kv';
+const SNAPSHOTS = 'snapshots';
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
 function db() {
   dbPromise ??= openDB(DB_NAME, DB_VERSION, {
+    // upgrade 对每个跨越的版本都会跑，所以逐个 contains 判断即可，
+    // 老库（v1）升上来时只会补建缺失的 snapshots 表
     upgrade(database) {
       if (!database.objectStoreNames.contains(GRAPHS)) {
         const store = database.createObjectStore(GRAPHS, { keyPath: 'id' });
@@ -17,6 +22,10 @@ function db() {
       }
       if (!database.objectStoreNames.contains(KV)) {
         database.createObjectStore(KV);
+      }
+      if (!database.objectStoreNames.contains(SNAPSHOTS)) {
+        const store = database.createObjectStore(SNAPSHOTS, { keyPath: 'id' });
+        store.createIndex('createdAt', 'createdAt');
       }
     },
   });
@@ -62,6 +71,45 @@ export async function loadLastGraphId(): Promise<string | undefined> {
 
 export async function saveLastGraphId(id: string): Promise<void> {
   await (await db()).put(KV, id, 'lastGraphId');
+}
+
+/* ---------- 快照 ---------- */
+
+export async function saveSnapshot(snapshot: Snapshot): Promise<void> {
+  await (await db()).put(SNAPSHOTS, snapshot);
+}
+
+/**
+ * 列出快照的摘要信息。
+ *
+ * IndexedDB 没法只取部分字段，所以这里确实把整份读了出来再降维。
+ * 上限是 10 份，个人使用量级下可以接受；真到了几十 MB 再拆成
+ * meta / payload 两张表也不迟。
+ */
+export async function listSnapshots(): Promise<SnapshotMeta[]> {
+  const all: Snapshot[] = await (await db()).getAll(SNAPSHOTS);
+  return all.map(toMeta).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function loadSnapshot(id: string): Promise<Snapshot | undefined> {
+  return (await db()).get(SNAPSHOTS, id);
+}
+
+export async function deleteSnapshot(id: string): Promise<void> {
+  await (await db()).delete(SNAPSHOTS, id);
+}
+
+/** 整份替换所有画布，用于回滚。单个事务，中途失败不会留下半套数据 */
+export async function replaceAllGraphs(graphs: Graph[]): Promise<void> {
+  const database = await db();
+  const tx = database.transaction(GRAPHS, 'readwrite');
+  await tx.store.clear();
+  for (const graph of graphs) await tx.store.put(graph);
+  await tx.done;
+}
+
+export async function loadAllGraphs(): Promise<Graph[]> {
+  return (await db()).getAll(GRAPHS);
 }
 
 export interface DebouncedSaver {
