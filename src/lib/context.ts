@@ -117,18 +117,30 @@ export function isInContext(node: ChatNode): boolean {
   return inContextByDefault(node.role);
 }
 
-/** 决定一个节点是否参与上下文 */
-function participates(node: ChatNode): boolean {
-  if (node.contextMode === 'exclude') return false;
+export type ExcludeReason = 'muted' | 'empty' | 'error' | 'note';
+
+export const EXCLUDE_LABEL: Record<ExcludeReason, string> = {
+  muted: '已静音',
+  empty: '内容为空',
+  error: '这次请求出错了',
+  note: '批注默认不进上下文',
+};
+
+/**
+ * 节点被排除的原因；返回 null 表示会进上下文。
+ * 顺序即优先级，UI 上显示的理由要和实际生效的那条一致。
+ */
+export function excludeReason(node: ChatNode): ExcludeReason | null {
+  if (node.contextMode === 'exclude') return 'muted';
   /*
    * 空节点永远跳过，且这条要排在 include 前面 ——「重新生成前先把内容清空」
    * 正是靠它把自己排除出自己的上下文，让首次生成和重新生成共用一条代码路径。
    * 若 include 能强行把空节点塞进去，那条路径就断了。
    */
-  if (!node.content.trim()) return false;
-  if (node.status === 'error') return false;
-  if (node.contextMode === 'include') return true;
-  return inContextByDefault(node.role);
+  if (!node.content.trim()) return 'empty';
+  if (node.status === 'error') return 'error';
+  if (node.contextMode === 'include') return null;
+  return inContextByDefault(node.role) ? null : 'note';
 }
 
 /**
@@ -156,6 +168,101 @@ export interface BuildContextOptions {
   limit?: number;
 }
 
+export interface ContextEntry {
+  message: ChatMessage;
+  /**
+   * 这条消息来自哪些节点。
+   * 通常是一个；system 那条可能由多个 system 节点合并而来，
+   * 若还带了全局提示词则数组会比实际来源少一项。
+   */
+  sourceIds: string[];
+}
+
+export interface ExcludedNode {
+  node: ChatNode;
+  reason: ExcludeReason;
+}
+
+export interface ContextExplain {
+  entries: ContextEntry[];
+  /** 在祖先链上、但没能进上下文的节点 */
+  excluded: ExcludedNode[];
+  /** 因为条数上限被裁掉的消息数 */
+  trimmed: number;
+  /** 全局提示词是否参与了那条 system 消息 */
+  usedGlobalPrompt: boolean;
+}
+
+/**
+ * 生成上下文，并说明每条消息的来源、哪些节点被排除、为什么。
+ *
+ * buildContext 直接建立在它之上，两者不可能各算各的 —— 预览面板要是和
+ * 真正发出去的内容对不上，那比没有预览更糟。
+ */
+export function explainContext(
+  nodes: NodeMap,
+  targetId: string,
+  options: BuildContextOptions = {},
+): ContextExplain {
+  const chain = topoOrder(nodes, targetId);
+
+  const excluded: ExcludedNode[] = [];
+  const systemParts: string[] = [];
+  const systemSources: string[] = [];
+  let body: ContextEntry[] = [];
+
+  const globalPrompt = options.systemPrompt?.trim();
+  if (globalPrompt) systemParts.push(globalPrompt);
+
+  for (const node of chain) {
+    const reason = excludeReason(node);
+    if (reason) {
+      excluded.push({ node, reason });
+      continue;
+    }
+    if (node.role === 'system') {
+      systemParts.push(node.content.trim());
+      systemSources.push(node.id);
+    } else {
+      // 批注走到这里说明被显式设成了 include，当成 user 发言
+      body.push({
+        message: {
+          role: node.role === 'assistant' ? 'assistant' : 'user',
+          content: node.content,
+        },
+        sourceIds: [node.id],
+      });
+    }
+  }
+
+  let trimmed = 0;
+  if (options.limit && options.limit > 0 && body.length > options.limit) {
+    trimmed = body.length - options.limit;
+    body = body.slice(-options.limit);
+    // 从后往前切很可能正好切在一问一答中间，让对话以 assistant 开头。
+    // 那读起来就是模型凭空接了半句话，部分服务商也要求首条必须是 user。
+    while (body.length && body[0]!.message.role === 'assistant') {
+      body.shift();
+      trimmed++;
+    }
+  }
+
+  const entries: ContextEntry[] = [];
+  if (systemParts.length) {
+    entries.push({
+      message: { role: 'system', content: systemParts.join('\n\n') },
+      sourceIds: systemSources,
+    });
+  }
+
+  return {
+    entries: entries.concat(body),
+    excluded,
+    trimmed,
+    usedGlobalPrompt: !!globalPrompt,
+  };
+}
+
 /**
  * 生成实际发给 API 的 messages。
  * 注意 targetId 自身也会被包含 —— 调用方传的是「最后一条 user 节点」的 id。
@@ -165,36 +272,7 @@ export function buildContext(
   targetId: string,
   options: BuildContextOptions = {},
 ): ChatMessage[] {
-  const chain = topoOrder(nodes, targetId).filter(participates);
-
-  const systemParts: string[] = [];
-  if (options.systemPrompt?.trim()) systemParts.push(options.systemPrompt.trim());
-
-  let body: ChatMessage[] = [];
-  for (const node of chain) {
-    if (node.role === 'system') {
-      systemParts.push(node.content.trim());
-    } else {
-      // 批注走到这里说明被显式设成了 include，当成 user 发言
-      body.push({
-        role: node.role === 'assistant' ? 'assistant' : 'user',
-        content: node.content,
-      });
-    }
-  }
-
-  if (options.limit && options.limit > 0 && body.length > options.limit) {
-    body = body.slice(-options.limit);
-    // 从后往前切很可能正好切在一问一答中间，让对话以 assistant 开头。
-    // 那读起来就是模型凭空接了半句话，部分服务商也要求首条必须是 user。
-    while (body.length && body[0]!.role === 'assistant') body.shift();
-  }
-
-  const messages: ChatMessage[] = [];
-  if (systemParts.length) {
-    messages.push({ role: 'system', content: systemParts.join('\n\n') });
-  }
-  return messages.concat(body);
+  return explainContext(nodes, targetId, options).entries.map((e) => e.message);
 }
 
 /**

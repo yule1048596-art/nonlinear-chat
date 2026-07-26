@@ -11,10 +11,11 @@ import { GraphDrawer } from './components/GraphDrawer';
 import { SettingsPanel } from './components/SettingsPanel';
 import { SearchPalette } from './components/SearchPalette';
 import { SnapshotDrawer } from './components/SnapshotDrawer';
+import { ContextPreview } from './components/ContextPreview';
 import { AUTO_INTERVAL_MS } from './lib/snapshots';
 
 /** 选中节点时告诉用户「这一发到底会带多少上下文」—— 非线性对话最容易失控的就是这个 */
-function ContextBar() {
+function ContextBar({ onOpen }: { onOpen: () => void }) {
   const nodes = useStore((s) => s.graph?.nodes);
   const selectedId = useStore((s) => s.selectedId);
   const settings = useStore((s) => s.settings);
@@ -42,12 +43,12 @@ function ContextBar() {
   if (!stats) return null;
 
   return (
-    <div className="context-bar">
+    <button className="context-bar" onClick={onOpen} title="点开看实际会发出去的完整内容">
       <span className="dot" />
       这一发会带上 <b>{stats.count}</b> 条消息
       {stats.hasSystem && ' + system'} · 约 <b>{formatTokens(stats.tokens)}</b> tokens
-      <span className="context-bar-hint">清晰显示的节点就是会被发出去的部分</span>
-    </div>
+      <span className="context-bar-hint">点开逐条查看</span>
+    </button>
   );
 }
 
@@ -86,6 +87,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -127,6 +129,7 @@ export default function App() {
       if (e.key === 'Escape') {
         setGraphsOpen(false);
         setSettingsOpen(false);
+        setPreviewOpen(false);
         return;
       }
       if (!(e.metaKey || e.ctrlKey)) return;
@@ -163,12 +166,13 @@ export default function App() {
         <main className="canvas-wrap">
           <Canvas />
           <EmptyHint />
-          <ContextBar />
+          <ContextBar onOpen={() => setPreviewOpen(true)} />
         </main>
         <GraphDrawer open={graphsOpen} onClose={() => setGraphsOpen(false)} />
         <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
         <SnapshotDrawer open={snapshotsOpen} onClose={() => setSnapshotsOpen(false)} />
+        <ContextPreview open={previewOpen} onClose={() => setPreviewOpen(false)} />
         {toastMsg && <div className="toast">{toastMsg}</div>}
       </div>
     </ReactFlowProvider>

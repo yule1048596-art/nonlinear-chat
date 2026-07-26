@@ -3,6 +3,7 @@ import {
   buildContext,
   collectDescendants,
   computeHidden,
+  explainContext,
   isInContext,
   migrateContextMode,
   topoOrder,
@@ -190,6 +191,86 @@ describe('buildContext · 其余', () => {
   it('limit 大于实际条数时原样返回', () => {
     const g = graph(node('u1', 'user', '问一'), node('a1', 'assistant', '答一', ['u1']));
     expect(texts(buildContext(g, 'a1', { limit: 99 }))).toEqual(['user:问一', 'assistant:答一']);
+  });
+});
+
+describe('explainContext', () => {
+  /** 预览要是和真正发出去的内容对不上，比没有预览更糟 */
+  it('entries 和 buildContext 的结果始终一致', () => {
+    const memo = node('n', 'note', '批注');
+    memo.contextMode = 'include';
+    const muted = node('a2', 'assistant', '被静音的回答', ['u1']);
+    muted.contextMode = 'exclude';
+    const g = graph(
+      node('s', 'system', '设定'),
+      node('u1', 'user', '问一', ['s']),
+      node('a1', 'assistant', '答一', ['u1']),
+      muted,
+      memo,
+      node('u2', 'user', '问二', ['a1', 'a2', 'n']),
+    );
+    for (const opts of [{}, { systemPrompt: '全局' }, { limit: 2 }, { systemPrompt: '全局', limit: 1 }]) {
+      expect(explainContext(g, 'u2', opts).entries.map((e) => e.message)).toEqual(
+        buildContext(g, 'u2', opts),
+      );
+    }
+  });
+
+  it('每条消息都能溯源到节点', () => {
+    const g = graph(
+      node('u1', 'user', '问一'),
+      node('a1', 'assistant', '答一', ['u1']),
+      node('u2', 'user', '问二', ['a1']),
+    );
+    const { entries } = explainContext(g, 'u2');
+    expect(entries.map((e) => e.sourceIds)).toEqual([['u1'], ['a1'], ['u2']]);
+  });
+
+  it('合并的 system 消息记录全部来源节点', () => {
+    const g = graph(
+      node('s1', 'system', '设定一'),
+      node('s2', 'system', '设定二', ['s1']),
+      node('u1', 'user', '问', ['s2']),
+    );
+    const { entries, usedGlobalPrompt } = explainContext(g, 'u1', { systemPrompt: '全局' });
+    expect(entries[0]!.message.content).toBe('全局\n\n设定一\n\n设定二');
+    expect(entries[0]!.sourceIds).toEqual(['s1', 's2']);
+    expect(usedGlobalPrompt).toBe(true);
+  });
+
+  it('逐个说明节点被排除的原因', () => {
+    const muted = node('a1', 'assistant', '静音的', ['u1']);
+    muted.contextMode = 'exclude';
+    const failed = node('a2', 'assistant', '出错的', ['u1']);
+    failed.status = 'error';
+    const g = graph(
+      node('u1', 'user', '问'),
+      muted,
+      failed,
+      node('blank', 'user', '   ', ['u1']),
+      node('memo', 'note', '批注', ['u1']),
+      node('end', 'user', '汇总', ['a1', 'a2', 'blank', 'memo']),
+    );
+    const byId = Object.fromEntries(
+      explainContext(g, 'end').excluded.map((e) => [e.node.id, e.reason]),
+    );
+    expect(byId).toEqual({ a1: 'muted', a2: 'error', blank: 'empty', memo: 'note' });
+  });
+
+  it('报告被 limit 裁掉的条数', () => {
+    const g = graph(
+      node('u1', 'user', '一'),
+      node('a1', 'assistant', '二', ['u1']),
+      node('u2', 'user', '三', ['a1']),
+    );
+    // limit=2 切出 [assistant 二, user 三]，开头的 assistant 还要再丢一条
+    expect(explainContext(g, 'u2', { limit: 2 }).trimmed).toBe(2);
+    expect(explainContext(g, 'u2', {}).trimmed).toBe(0);
+  });
+
+  it('没有全局提示词时如实报告', () => {
+    const g = graph(node('u1', 'user', '问'));
+    expect(explainContext(g, 'u1').usedGlobalPrompt).toBe(false);
   });
 });
 
