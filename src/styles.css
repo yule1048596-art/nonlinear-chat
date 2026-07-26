@@ -2017,3 +2017,9 @@ body.is-connecting .handle {
     transition-duration: 0.01ms !important;
   }
 }
+
+.backup-key-toggle {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}

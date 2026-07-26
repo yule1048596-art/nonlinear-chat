@@ -1,9 +1,10 @@
 import { useRef } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { useStore } from '../store/useStore';
-import type { Graph } from '../types';
 import { MODE_ICON, MODE_LABEL, type ThemeMode } from '../lib/theme';
 import { toast } from '../lib/toast';
+import { parseBackup } from '../lib/backup';
+import { downloadJson } from '../lib/download';
 
 export function Toolbar({
   themeMode,
@@ -27,6 +28,8 @@ export function Toolbar({
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
   const applyLayout = useStore((s) => s.applyLayout);
+  const importSettings = useStore((s) => s.importSettings);
+  const restoreBackup = useStore((s) => s.restoreBackup);
   const { getNodes, fitView } = useReactFlow();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -37,22 +40,36 @@ export function Toolbar({
 
   const exportGraph = () => {
     if (!graph) return;
-    const blob = new Blob([JSON.stringify(graph, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${graph.title || 'canvas'}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadJson(graph, `${graph.title || 'canvas'}.json`);
   };
 
+  /** 一个入口认三种文件：单画布、设置备份、完整备份。认不出就说清楚，不硬塞 */
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     try {
-      const parsed = JSON.parse(await file.text()) as Graph;
-      if (!parsed?.nodes || typeof parsed.nodes !== 'object') throw new Error('缺少 nodes 字段');
-      await importGraph(parsed);
-      toast('导入成功');
+      const parsed = parseBackup(JSON.parse(await file.text()));
+
+      if (parsed.type === 'graph') {
+        await importGraph(parsed.data);
+        toast('已导入画布');
+      } else if (parsed.type === 'settings') {
+        const { added, skipped } = importSettings(parsed.data);
+        toast(
+          added
+            ? `已并入 ${added} 套模型配置${skipped ? `，跳过 ${skipped} 套重复的` : ''}`
+            : '这些配置本地都已经有了',
+        );
+      } else {
+        if (
+          !confirm(
+            `完整恢复会用备份里的 ${parsed.data.graphs.length} 个画布和设置替换当前全部内容。\n\n恢复前会自动存一份快照，可以回滚。继续？`,
+          )
+        ) {
+          return;
+        }
+        const { graphs } = await restoreBackup(parsed.data);
+        toast(`已恢复 ${graphs} 个画布 · 恢复前的状态存进快照了`);
+      }
     } catch (err) {
       toast(`导入失败：${(err as Error).message}`);
     } finally {
@@ -149,7 +166,11 @@ export function Toolbar({
         <button className="icon-btn" onClick={exportGraph} title="导出为 JSON">
           ↓
         </button>
-        <button className="icon-btn" onClick={() => fileRef.current?.click()} title="从 JSON 导入">
+        <button
+          className="icon-btn"
+          onClick={() => fileRef.current?.click()}
+          title="导入：画布 / 设置 / 完整备份都认"
+        >
           ↑
         </button>
         <input

@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { newProfile, useStore } from '../store/useStore';
 import { LlmError, PRESETS, listModels, streamChat } from '../lib/llm';
+import { backupFilename } from '../lib/backup';
+import { downloadJson } from '../lib/download';
+import { toast } from '../lib/toast';
 import type { Profile } from '../types';
 
 export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -8,11 +11,15 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
   const updateSettings = useStore((s) => s.updateSettings);
   const upsertProfile = useStore((s) => s.upsertProfile);
   const removeProfile = useStore((s) => s.removeProfile);
+  const exportSettings = useStore((s) => s.exportSettings);
+  const exportEverything = useStore((s) => s.exportEverything);
 
   const [editingId, setEditingId] = useState(settings.activeProfileId);
   const [showKey, setShowKey] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [busy, setBusy] = useState<'models' | 'test' | null>(null);
+  // 默认不含 Key：导出文件最常见的用途是分享配置模板和换设备，带明文 Key 太容易泄漏
+  const [includeKeys, setIncludeKeys] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
@@ -247,6 +254,56 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
             </label>
             <p className="hint">
               超出上限时丢弃最早的消息。0 表示把整条祖先链都发出去。
+            </p>
+          </section>
+
+          <section>
+            <h3>备份与迁移</h3>
+            <p className="hint">
+              快照存在浏览器同一个数据库里，防的是误删误改；<b>清浏览器数据会连它一起清掉</b>。
+              导出成文件才是真正落在浏览器外面的备份。
+            </p>
+
+            <label className="checkbox backup-key-toggle">
+              <input
+                type="checkbox"
+                checked={includeKeys}
+                onChange={(e) => setIncludeKeys(e.target.checked)}
+              />
+              导出时包含 API Key
+            </label>
+            <p className="hint">
+              {includeKeys
+                ? '文件里会有明文 Key —— 只在自己换设备时用，别发给别人或传到网盘。'
+                : '默认不含 Key，可以安全地当配置模板分享；换设备时对方自己填 Key。'}
+            </p>
+
+            <div className="row">
+              <button
+                className="btn solid grow"
+                onClick={() => {
+                  downloadJson(exportSettings(includeKeys), backupFilename('nexus-settings'));
+                  toast('设置已导出');
+                }}
+              >
+                导出设置
+              </button>
+              <button
+                className="btn solid grow"
+                onClick={async () => {
+                  const backup = await exportEverything(includeKeys);
+                  downloadJson(backup, backupFilename('nexus-backup'));
+                  toast(`已导出 ${backup.graphs.length} 个画布和设置`);
+                }}
+              >
+                导出全部
+              </button>
+            </div>
+            <p className="hint">
+              导入走顶栏的 ↑ 按钮，它认得三种文件：单个画布、设置、完整备份。
+              <br />
+              导入设置<b>只会并入没有的模型配置</b>，不覆盖你已有的；要整体替换请用完整备份，
+              那条路径会先自动存一份快照。
             </p>
           </section>
 

@@ -19,6 +19,13 @@ import {
   type SnapshotMeta,
   type SnapshotReason,
 } from '../lib/snapshots';
+import {
+  buildFullBackup,
+  buildSettingsBackup,
+  mergeProfiles,
+  type FullBackup,
+  type SettingsBackup,
+} from '../lib/backup';
 import * as db from '../lib/db';
 
 const DEFAULT_SETTINGS: Settings = {
@@ -131,6 +138,14 @@ interface State {
   /** 只从快照里捞回一个画布，不动其他数据 */
   restoreGraphFromSnapshot: (snapshotId: string, graphId: string) => Promise<boolean>;
   removeSnapshot: (snapshotId: string) => Promise<void>;
+
+  /** 打包全部数据用于导出。includeKeys 默认关，导出文件常被到处传 */
+  exportSettings: (includeKeys: boolean) => SettingsBackup;
+  exportEverything: (includeKeys: boolean) => Promise<FullBackup>;
+  /** 只合并模型配置，不碰本地已有的。返回加了几条、跳过几条 */
+  importSettings: (backup: SettingsBackup) => { added: number; skipped: number };
+  /** 整份恢复：替换所有画布和设置，恢复前自动打快照 */
+  restoreBackup: (backup: FullBackup) => Promise<{ graphs: number }>;
 
   send: (userNodeId: string) => Promise<void>;
   regenerate: (assistantId: string) => Promise<void>;
@@ -589,6 +604,52 @@ export const useStore = create<State>((set, get) => {
       );
       set({ selectedId: id });
       return id;
+    },
+
+    exportSettings(includeKeys) {
+      return buildSettingsBackup(get().settings, includeKeys);
+    },
+
+    async exportEverything(includeKeys) {
+      saver.flush(); // 否则导出的是磁盘上的旧版本
+      return buildFullBackup(get().settings, await db.loadAllGraphs(), includeKeys);
+    },
+
+    importSettings(backup) {
+      const current = get().settings;
+      const { profiles, added, skipped } = mergeProfiles(
+        current.profiles,
+        backup.settings.profiles ?? [],
+        uid,
+      );
+      /*
+       * 只并配置，不导入 systemPrompt / contextLimit —— 那两个是本机偏好，
+       * 而「导入设置」的语义是拿到别处的模型配置，不是拿别人的状态盖掉自己的。
+       * 要整体覆盖请用完整备份恢复，那条路径会先打快照。
+       */
+      persistSettings({ ...current, profiles });
+      return { added, skipped };
+    },
+
+    async restoreBackup(backup) {
+      await get().takeSnapshot('导入前');
+      saver.flush();
+
+      await db.replaceAllGraphs(backup.graphs);
+      await db.saveSettings(backup.settings);
+      resetHistory();
+
+      const first = backup.graphs[0];
+      if (first) await db.saveLastGraphId(first.id);
+
+      set({
+        settings: backup.settings,
+        graph: first ? sanitize(first) : emptyGraph(),
+        selectedId: null,
+        graphs: await db.listGraphs(),
+        snapshots: await db.listSnapshots(),
+      });
+      return { graphs: backup.graphs.length };
     },
 
     async takeSnapshot(reason = '自动') {
