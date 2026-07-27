@@ -489,11 +489,19 @@ body.is-connecting .react-flow__node {
 }
 
 .react-flow__minimap {
-  background: var(--bg-elevated);
+  background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
+  backdrop-filter: blur(8px);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   box-shadow: var(--shadow-2);
   overflow: hidden;
+  /* 它常压在右下角的节点上，平时收着点，鼠标过去再实起来 */
+  opacity: 0.72;
+  transition: opacity 0.2s var(--ease);
+}
+
+.react-flow__minimap:hover {
+  opacity: 1;
 }
 
 .react-flow__minimap-mask {
@@ -614,6 +622,12 @@ body.is-connecting .react-flow__node {
   width: 380px;
   background: var(--surface);
   border: 1px solid var(--border);
+  /*
+   * 左侧一条角色色边。原来四种角色只靠一个 6px 的点区分，一屏看过去
+   * 系统/提问/回答/批注 就是四个一模一样的白方块 —— 角色色明明有，
+   * 却用在了几乎为零的面积上。地图视图早就这么做了，这里补齐。
+   */
+  border-left: 3px solid var(--role-color, var(--border));
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
@@ -631,8 +645,9 @@ body.is-connecting .react-flow__node {
  * 没有选中时不淡化任何东西 —— 平时画布该是正常的。
  */
 .node.is-dimmed {
-  opacity: 0.38;
-  filter: saturate(0.2);
+  /* 原来 0.38 太狠了，一选中节点画布就被掏空。够分清主次即可 */
+  opacity: 0.52;
+  filter: saturate(0.45);
 }
 
 .node.is-dimmed:hover {
@@ -667,8 +682,8 @@ body.is-connecting .react-flow__node {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 9px 10px 5px 12px;
-  min-height: 30px;
+  padding: 8px 10px 4px 12px;
+  min-height: 26px;
 }
 
 .role-dot {
@@ -679,17 +694,32 @@ body.is-connecting .react-flow__node {
   background: var(--text-3);
 }
 
-.node-user .role-dot {
-  background: var(--user);
+/* 角色色只在这里定一次，色条、圆点、角色名共用 */
+.node-user,
+.map-node.node-user {
+  --role-color: var(--user);
 }
-.node-assistant .role-dot {
-  background: var(--assistant);
+.node-assistant,
+.map-node.node-assistant {
+  --role-color: var(--assistant);
 }
-.node-system .role-dot {
-  background: var(--system);
+.node-system,
+.map-node.node-system {
+  --role-color: var(--system);
 }
-.node-note .role-dot {
-  background: var(--note);
+.node-note,
+.map-node.node-note {
+  --role-color: var(--note);
+}
+
+.role-dot {
+  background: var(--role-color, var(--text-3));
+}
+
+/* 角色名也染色：一个字的色比一个点的色好认得多 */
+.node .role-badge,
+.node .role-switch {
+  color: var(--role-color, var(--text-2));
 }
 
 .role-badge {
@@ -762,8 +792,8 @@ body.is-connecting .react-flow__node {
 
 .node-input {
   width: 100%;
-  /* 够一行半即可：空提问节点原来 52px，一行字下面白白空两行 */
-  min-height: 34px;
+  /* 刚好一行。再多留就是白占地方 —— 一行字的卡片原来有 42px 是非内容 */
+  min-height: 24px;
   background: transparent;
   border: none;
   color: var(--text);
@@ -804,7 +834,12 @@ body.is-connecting .react-flow__node {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 6px 8px 8px;
+  /*
+   * 用 opacity 而不是 display:none —— 位置在画布上是有意义的，
+   * 悬停时卡片突然长高会把整条边都拽动一下。代价是底部常驻一条空带，
+   * 所以这里把预留高度压到刚好放下按钮。
+   */
+  padding: 3px 8px 5px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.16s var(--ease);
@@ -1551,7 +1586,9 @@ body.is-connecting .handle {
 }
 
 .node.is-muted {
+  /* 虚线边 = 不进上下文。但左边那条是角色身份，不该跟着状态变成虚的 */
   border-style: dashed;
+  border-left-style: solid;
 }
 
 .context-badge {
@@ -2413,8 +2450,8 @@ body.is-connecting .handle {
 }
 
 .map-node.is-dimmed {
-  opacity: 0.32;
-  filter: saturate(0.2);
+  opacity: 0.45;
+  filter: saturate(0.45);
 }
 
 .map-node.is-dimmed:hover {
@@ -2768,4 +2805,13 @@ body.is-connecting .handle {
   object-fit: cover;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
+}
+
+/* 次要操作降一档：七个等重按钮排一行等于没有层级 */
+.btn.quiet {
+  color: var(--text-3);
+}
+
+.btn.quiet:hover:not(:disabled) {
+  color: var(--text);
 }

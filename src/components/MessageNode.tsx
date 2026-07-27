@@ -55,6 +55,12 @@ function AutoTextarea({
   return (
     <textarea
       ref={ref}
+      /*
+       * rows=1 不能省。textarea 默认 rows=2，height:auto 时 scrollHeight
+       * 至少返回两行 —— 于是每个只有一行字的节点都白占一行的高度，
+       * 卡片底部那截「怎么调 padding 都消不掉的空白」就是从这来的。
+       */
+      rows={1}
       className="node-input nodrag nowheel"
       value={value}
       placeholder={placeholder}

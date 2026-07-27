@@ -126,15 +126,21 @@ export function Toolbar({
         <button className="btn" onClick={() => void newGraph()} title="新建画布">
           新建
         </button>
-        <button className="btn" onClick={onOpenSearch} title="搜索节点内容　⌘/Ctrl + K">
+        <button className="btn quiet" onClick={onOpenSearch} title="搜索节点内容　⌘/Ctrl + K">
           搜索
         </button>
-        <button className="btn" onClick={tidy} title="按分层自动排版，可撤销">
+        <button className="btn quiet" onClick={tidy} title="按分层自动排版，可撤销">
           整理
         </button>
-        <button className="btn" onClick={onOpenSnapshots} title="本地快照与回滚">
+        <button className="btn quiet" onClick={onOpenSnapshots} title="本地快照与回滚">
           快照
         </button>
+      </div>
+
+      <span className="toolbar-sep" />
+
+      {/* 视图和面板单独一组：它们改变的是「看到什么」，和上面那些操作不是一回事 */}
+      <div className="toolbar-group">
         <button
           className={viewMode === 'map' ? 'btn on' : 'btn'}
           onClick={() => setViewMode(viewMode === 'map' ? 'edit' : 'map')}

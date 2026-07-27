@@ -33,7 +33,8 @@ import { MapNode } from './MapNode';
 
 const nodeTypes: NodeTypes = { message: MessageNode, map: MapNode };
 
-const EDGE_MARKER = { type: MarkerType.ArrowClosed, width: 14, height: 14 } as const;
+// 箭头做小：连线是背景信息，不该比节点还抢眼
+const EDGE_MARKER = { type: MarkerType.ArrowClosed, width: 11, height: 11 } as const;
 
 export function Canvas() {
   const nodes = useStore((s) => s.graph?.nodes);
@@ -354,7 +355,9 @@ export function Canvas() {
          * 连线密，一堆折角和箭头会把画面剁碎；曲线才是「一张图」的样子。
          * 走向靠上下两个连接点已经说清楚了，箭头是多余的。
          */
-        const type = isMap ? 'default' : 'smoothstep';
+        // 两个视图统一用贝塞尔曲线。直角折线在节点少时指向明确，
+        // 但一屏十几个节点时满画面折角，看着像技术图而不是设计过的东西
+        const type = 'default';
         // 曲线上跑蚂蚁线太吵，改用「实线 = 在上下文里 / 虚线 = 旁支」区分
         const animated = isMap ? false : active;
         const className = isMap ? (active ? 'edge-path' : 'edge-alt') : active ? 'edge-active' : '';
