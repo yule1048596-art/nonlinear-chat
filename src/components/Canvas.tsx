@@ -5,6 +5,7 @@ import {
   Controls,
   MarkerType,
   MiniMap,
+  Panel,
   ReactFlow,
   useReactFlow,
   type Connection,
@@ -15,7 +16,14 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useStore } from '../store/useStore';
-import { collectAncestors, collectDescendants, computeHidden } from '../lib/context';
+import { collectAncestors, collectDescendants, computeHidden, type NodeMap } from '../lib/context';
+import { computeLayout } from '../lib/autoLayout';
+import {
+  MAP_NODE_HEIGHT,
+  MAP_NODE_SEP,
+  MAP_NODE_WIDTH,
+  MAP_RANK_SEP,
+} from '../lib/view';
 import { toast } from '../lib/toast';
 import { ContextMenu, type MenuAnchor, type MenuItem } from './ContextMenu';
 import { MessageNode } from './MessageNode';
@@ -128,6 +136,43 @@ export function Canvas() {
     return collectAncestors(nodes, selectedId);
   }, [nodes, selectedId]);
 
+  /*
+   * 地图视图专用的一套坐标。
+   *
+   * 只在「图的形状」变了的时候才重排：正文每敲一个字 nodes 就是一个新对象，
+   * 跟着跑一遍 dagre 纯属浪费，而且排版结果根本不会变。所以这里用
+   * 「id + 父节点」拼一个结构签名当依赖，正文交给节点自己去渲染。
+   */
+  const nodesRef = useRef<NodeMap | undefined>(undefined);
+  nodesRef.current = nodes;
+
+  const structureKey = useMemo(() => {
+    if (!nodes) return '';
+    return Object.values(nodes)
+      .map((n) => `${n.id}>${n.parentIds.join(',')}`)
+      .sort()
+      .join('|');
+  }, [nodes]);
+
+  const mapPositions = useMemo(() => {
+    const all = nodesRef.current;
+    if (viewMode !== 'map' || !all) return null;
+    // 被折叠藏起来的节点不参与排版，否则会在图里留下一片空洞
+    const visible: NodeMap = {};
+    for (const [id, node] of Object.entries(all)) if (!hidden.has(id)) visible[id] = node;
+
+    const dimensions = new Map(
+      Object.keys(visible).map((id) => [id, { width: MAP_NODE_WIDTH, height: MAP_NODE_HEIGHT }]),
+    );
+    return computeLayout(visible, {
+      dimensions,
+      nodeSep: MAP_NODE_SEP,
+      rankSep: MAP_RANK_SEP,
+    });
+    // nodesRef 不入依赖是有意的，见上面的说明
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, structureKey, hidden]);
+
   /**
    * 流式输出时 nodes 每 33ms 变一次。如果每次都重建 React Flow 的节点对象，
    * 整张画布都会跟着重渲染。这里按 id 缓存，只有位置/选中/上下文变了才换新对象，
@@ -140,7 +185,8 @@ export function Canvas() {
     const out: Node[] = [];
 
     const hasSelection = !!selectedId && !!nodes[selectedId];
-    const type = viewMode === 'map' ? 'map' : 'message';
+    const isMap = viewMode === 'map';
+    const type = isMap ? 'map' : 'message';
 
     for (const node of Object.values(nodes)) {
       alive.add(node.id);
@@ -150,6 +196,8 @@ export function Canvas() {
       // 没有选中时整张画布保持正常，否则平时看什么都是灰的。
       const dimmed = hasSelection && !contextSet.has(node.id);
       const measured = dimsRef.current.get(node.id);
+      // 地图视图排完的坐标只用于渲染，不写回节点数据
+      const position = mapPositions?.[node.id] ?? node.position;
       const isHidden = hidden.has(node.id);
       const hiddenCount = hiddenCounts.get(node.id) ?? 0;
       const hasChildren = parentIds.has(node.id);
@@ -157,8 +205,8 @@ export function Canvas() {
       if (
         prev &&
         prev.type === type &&
-        prev.position.x === node.position.x &&
-        prev.position.y === node.position.y &&
+        prev.position.x === position.x &&
+        prev.position.y === position.y &&
         prev.selected === isSelected &&
         prev.measured === measured &&
         prev.hidden === isHidden &&
@@ -173,10 +221,12 @@ export function Canvas() {
       const next: Node = {
         id: node.id,
         type,
-        position: node.position,
+        position,
         selected: isSelected,
         measured,
         hidden: isHidden,
+        // 地图视图的坐标是算出来的，拖动它没有意义，拖了也会在下次重排时被冲掉
+        draggable: !isMap,
         data: { inContext, dimmed, hiddenCount, hasChildren },
       };
       cache.set(node.id, next);
@@ -184,13 +234,15 @@ export function Canvas() {
     }
     for (const key of [...cache.keys()]) if (!alive.has(key)) cache.delete(key);
     return out;
-  }, [nodes, selectedId, contextSet, dimsVersion, hidden, hiddenCounts, parentIds, viewMode]);
+  }, [nodes, selectedId, contextSet, dimsVersion, hidden, hiddenCounts, parentIds, viewMode, mapPositions]);
 
   const rfEdges = useMemo<Edge[]>(() => {
     if (!nodes) return [];
     const cache = edgeCache.current;
     const alive = new Set<string>();
     const out: Edge[] = [];
+
+    const isMap = viewMode === 'map';
 
     for (const node of Object.values(nodes)) {
       for (const parentId of node.parentIds) {
@@ -200,8 +252,24 @@ export function Canvas() {
         const active = contextSet.has(parentId) && contextSet.has(node.id);
         // 只要有一端被折叠藏起来，这条边就没有意义了
         const isHidden = hidden.has(parentId) || hidden.has(node.id);
+        /*
+         * 地图视图换成贝塞尔曲线，并且去掉箭头。
+         * 直角折线在稀疏的编辑视图里指向明确，但地图视图里节点挨得近、
+         * 连线密，一堆折角和箭头会把画面剁碎；曲线才是「一张图」的样子。
+         * 走向靠上下两个连接点已经说清楚了，箭头是多余的。
+         */
+        const type = isMap ? 'default' : 'smoothstep';
+        // 曲线上跑蚂蚁线太吵，改用「实线 = 在上下文里 / 虚线 = 旁支」区分
+        const animated = isMap ? false : active;
+        const className = isMap ? (active ? 'edge-path' : 'edge-alt') : active ? 'edge-active' : '';
         const prev = cache.get(id);
-        if (prev && prev.animated === active && prev.hidden === isHidden) {
+        if (
+          prev &&
+          prev.type === type &&
+          prev.animated === animated &&
+          prev.hidden === isHidden &&
+          prev.className === className
+        ) {
           out.push(prev);
           continue;
         }
@@ -209,11 +277,11 @@ export function Canvas() {
           id,
           source: parentId,
           target: node.id,
-          type: 'smoothstep',
-          animated: active,
+          type,
+          animated,
           hidden: isHidden,
-          className: active ? 'edge-active' : '',
-          markerEnd: EDGE_MARKER,
+          className,
+          ...(isMap ? {} : { markerEnd: EDGE_MARKER }),
         };
         cache.set(id, next);
         out.push(next);
@@ -221,7 +289,7 @@ export function Canvas() {
     }
     for (const key of [...cache.keys()]) if (!alive.has(key)) cache.delete(key);
     return out;
-  }, [nodes, contextSet, hidden]);
+  }, [nodes, contextSet, hidden, viewMode]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -323,6 +391,18 @@ export function Canvas() {
         zoomOnDoubleClick={false}
       >
         <Background variant={BackgroundVariant.Dots} gap={24} size={1.4} />
+        {viewMode === 'map' && (
+          <Panel position="top-left" className="map-legend">
+            <div>
+              <span className="legend-line" />
+              在当前上下文里
+            </div>
+            <div>
+              <span className="legend-line alt" />
+              其他分支
+            </div>
+          </Panel>
+        )}
         <Controls showInteractive={false} position="bottom-left" />
         <MiniMap
           pannable

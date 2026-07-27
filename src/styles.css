@@ -19,6 +19,8 @@
 
   --accent: #4c9aff;
   --accent-soft: rgba(76, 154, 255, 0.14);
+  /* 整块填充时用的深色版。--accent 配白字只有 2.5:1，压根读不清 */
+  --accent-fill: #2f6fd0;
   --user: #4c9aff;
   --assistant: #3ecf8e;
   --system: #a78bfa;
@@ -51,6 +53,8 @@
 
   --accent: #2f7de1;
   --accent-soft: rgba(47, 125, 225, 0.1);
+  /* 同上：--accent 配白字 4.08:1，12px 正文不够 */
+  --accent-fill: #1d63bd;
   --user: #2f7de1;
   --assistant: #0f9d64;
   --system: #7657d4;
@@ -2281,98 +2285,65 @@ body.is-connecting .handle {
 }
 
 /* ============================================================
-   地图视图：节点压成一行
+   地图视图
    ============================================================ */
 
 /*
- * 和编辑视图共用坐标，所以宽度也保持 380px —— 列对齐不变，只是每个节点
- * 从几百像素高压到 36px。缩小之后能认出谁是谁，靠的是左边那条角色色条：
- * 字号再小它也还在。
+ * 固定尺寸的小卡片。尺寸和 lib/view.ts 里的 MAP_NODE_WIDTH / HEIGHT 必须一致 ——
+ * 布局是在渲染之前用那两个常量算好的，这里对不上就会排得歪歪扭扭。
  */
 .map-node {
-  width: 380px;
-  height: 36px;
+  width: 232px;
+  height: 84px;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px 0 0;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--text-3);
-  border-radius: var(--radius-sm);
+  border-radius: 12px;
   box-shadow: var(--shadow-1);
   cursor: default;
   overflow: hidden;
-  transition: opacity 0.2s var(--ease), filter 0.2s var(--ease), box-shadow 0.2s var(--ease),
-    border-color 0.2s var(--ease);
+  /* 切换视图时淡入，位置的滑动交给 .react-flow__node 上的 transform 过渡 */
+  animation: map-node-in 0.28s var(--ease) both;
+  transition: box-shadow 0.2s var(--ease), border-color 0.2s var(--ease),
+    background 0.2s var(--ease), opacity 0.2s var(--ease), filter 0.2s var(--ease);
 }
 
-.map-node .role-dot {
-  margin-left: 9px;
+@keyframes map-node-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
 }
 
-.map-node.node-user {
-  border-left-color: var(--user);
-}
-.map-node.node-assistant {
-  border-left-color: var(--assistant);
-}
-.map-node.node-system {
-  border-left-color: var(--system);
-}
-.map-node.node-note {
-  border-left-color: var(--note);
-}
-
-.map-node:hover {
-  box-shadow: var(--shadow-2);
-}
-
-.map-node.is-dimmed {
-  opacity: 0.38;
-  filter: saturate(0.2);
-}
-
-.map-node.is-dimmed:hover {
-  opacity: 0.75;
-  filter: saturate(0.6);
-}
-
-.map-node.in-context {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-2);
-}
-
-.map-node.is-selected {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-2), 0 0 0 3px var(--accent-soft);
-}
-
-.map-node.is-muted .map-summary {
-  text-decoration: line-through;
-  text-decoration-color: var(--text-3);
-  opacity: 0.7;
-}
-
-.map-node.is-error {
-  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+.map-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 16px;
 }
 
 .map-role {
   font-size: 11px;
-  color: var(--text-3);
-  flex: 0 0 auto;
-  min-width: 22px;
+  font-weight: 500;
+  color: var(--text-2);
+  letter-spacing: 0.01em;
 }
 
 .map-summary {
-  flex: 1;
-  min-width: 0;
-  font-size: 12.5px;
-  color: var(--text-1);
-  white-space: nowrap;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+  /* 固定两行 —— 卡片等高，排出来才是整齐的网格 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-word;
 }
 
 .map-summary.is-empty {
@@ -2381,23 +2352,84 @@ body.is-connecting .handle {
 }
 
 .map-tokens {
-  flex: 0 0 auto;
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
 
+/* 角色靠左上角那颗点区分，和编辑视图共用配色 */
+.map-node .role-dot {
+  width: 7px;
+  height: 7px;
+}
+
+.map-node:hover {
+  box-shadow: var(--shadow-2);
+  border-color: var(--border-strong);
+}
+
+/*
+ * 选中的节点整块填充，而不是描个边。
+ * 一屏几十个卡片时描边太弱了，一眼扫过去找不到「我在哪儿」。
+ */
+.map-node.is-selected {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  box-shadow: var(--shadow-3);
+}
+
+.map-node.is-selected .map-role,
+.map-node.is-selected .map-summary,
+.map-node.is-selected .map-tokens {
+  color: #fff;
+}
+
+.map-node.is-selected .map-summary.is-empty {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.map-node.is-selected .role-dot {
+  background: #fff;
+}
+
+/* 在上下文里的节点：比普通节点实一点，但不抢选中节点的风头 */
+.map-node.in-context {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-2);
+}
+
+.map-node.is-dimmed {
+  opacity: 0.32;
+  filter: saturate(0.2);
+}
+
+.map-node.is-dimmed:hover {
+  opacity: 0.7;
+  filter: saturate(0.6);
+}
+
+.map-node.is-muted .map-summary {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-3);
+  opacity: 0.65;
+}
+
+.map-node.is-error {
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+}
+
 .map-flag {
-  flex: 0 0 auto;
-  font-size: 10px;
+  font-size: 9.5px;
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 4px;
   white-space: nowrap;
+  border: none;
+  font-family: inherit;
 }
 
 .map-flag.on {
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 .map-flag.off {
@@ -2407,5 +2439,73 @@ body.is-connecting .handle {
 
 .map-flag.error {
   color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+}
+
+.map-flag.collapsed {
+  color: var(--text-2);
+  background: var(--surface-3);
+  cursor: pointer;
+}
+
+.map-flag.collapsed:hover {
+  color: var(--accent);
+}
+
+.map-node.is-selected .map-flag {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+/* ---------- 地图视图的连线 ---------- */
+
+/*
+ * 实线 = 这条路径在当前上下文里，虚线 = 旁支。
+ * 参考自「Your path / Alternate branch」那套图例，比蚂蚁线安静得多。
+ */
+.react-flow__edge.edge-path .react-flow__edge-path {
+  stroke: var(--accent);
+  stroke-width: 2;
+  opacity: 0.9;
+}
+
+.react-flow__edge.edge-alt .react-flow__edge-path {
+  stroke: var(--edge);
+  stroke-width: 1.4;
+  stroke-dasharray: 4 5;
+  opacity: 0.75;
+}
+
+/* ---------- 图例 ---------- */
+
+.map-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+  font-size: 11px;
+  color: var(--text-3);
+  animation: map-node-in 0.28s var(--ease) both;
+}
+
+.map-legend div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-line {
+  width: 22px;
+  height: 0;
+  border-top: 2px solid var(--accent);
+  flex: 0 0 auto;
+}
+
+.legend-line.alt {
+  border-top: 1.5px dashed var(--edge);
 }
