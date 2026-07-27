@@ -19,6 +19,7 @@ import {
   type NodeMap,
 } from '../lib/context';
 import { DEFAULT_EMBEDDING, EmbeddingError, embedOne, type EmbeddingConfig } from '../lib/embeddings';
+import { isLocalUrl } from '../lib/endpoint';
 import { indexFile } from '../lib/indexer';
 import { retrieve, type RetrievedChunk } from '../lib/knowledge';
 import { loadViewMode, saveViewMode, type ViewMode } from '../lib/view';
@@ -338,7 +339,8 @@ export const useStore = create<State>((set, get) => {
     if (controllers.has(assistantId)) return;
 
     const profile = profileFor(target.profileId);
-    if (!profile.apiKey && !profile.baseUrl.includes('localhost')) {
+    // 本地服务通常不设 Key，不该被这道拦截挡下来
+    if (!profile.apiKey && !isLocalUrl(profile.baseUrl)) {
       commit(
         (nodes) => {
           nodes[assistantId] = {

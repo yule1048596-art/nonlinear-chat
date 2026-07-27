@@ -1255,7 +1255,15 @@ body.is-connecting .handle {
   margin-top: 0;
 }
 
+/* 字段名后面跟的一句说明。用 .value 会被渲染成等宽数字，中文读着别扭 */
+.label-note {
+  margin-left: 6px;
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+
 .value {
+  margin-left: 4px;
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
@@ -2572,4 +2580,92 @@ body.is-connecting .handle {
   text-decoration: line-through;
   text-decoration-color: var(--text-3);
   opacity: 0.65;
+}
+
+/* ============================================================
+   设置：标签页
+   ============================================================ */
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.tab {
+  position: relative;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 9px 11px;
+  cursor: pointer;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  transition: color 0.14s, background 0.14s;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.tab.is-active {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* 下划线用伪元素压在容器边框上，避免整行跳动 */
+.tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ---------- 本机服务引导 ---------- */
+
+.local-hint {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.local-hint-head {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 7px;
+}
+
+.local-cmd {
+  display: block;
+  padding: 7px 9px;
+  margin-bottom: 8px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.5;
+  /* 命令通常比抽屉宽，横向滚动而不是折断 —— 折断了就没法整行复制 */
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.local-hint .hint.list {
+  margin-bottom: 0;
 }

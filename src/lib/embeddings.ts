@@ -1,3 +1,4 @@
+import { isLocalUrl, usesLoopbackIp } from './endpoint';
 import { isNormalized } from './knowledge';
 
 export interface EmbeddingConfig {
@@ -34,19 +35,17 @@ function joinUrl(baseUrl: string, path: string): string {
  * 但写成 localhost 就放行（实测过），不说明的话没人猜得到。
  */
 function describeNetworkFailure(baseUrl: string): EmbeddingError {
-  const isLocal = /(^|\/\/)(localhost|127\.0\.0\.1|\[::1\])/i.test(baseUrl);
-  if (!isLocal) {
+  if (!isLocalUrl(baseUrl)) {
     return new EmbeddingError(
       '连不上向量服务',
       `无法访问 ${baseUrl}。可能是服务不允许浏览器跨域（CORS），或者地址填错了。`,
     );
   }
-  const usesLoopbackIp = /127\.0\.0\.1|\[::1\]/.test(baseUrl);
   return new EmbeddingError(
     '连不上本地向量服务',
     [
       `无法访问 ${baseUrl}。`,
-      usesLoopbackIp
+      usesLoopbackIp(baseUrl)
         ? '⚠️ 地址里写的是 127.0.0.1 —— 请改成 localhost。https 页面访问 http://127.0.0.1 会被浏览器的混合内容策略拦掉，而 localhost 属于可信来源不受限。'
         : '请确认本地服务正在运行。',
       '若用 llama.cpp：确认模型文件所在的磁盘已挂载，服务已启动。',

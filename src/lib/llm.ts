@@ -184,7 +184,20 @@ export async function listModels(profile: Pick<Profile, 'baseUrl' | 'apiKey'>): 
     .sort();
 }
 
-export const PRESETS: Array<{ name: string; baseUrl: string; model: string }> = [
+export interface Preset {
+  name: string;
+  baseUrl: string;
+  model: string;
+  /**
+   * 跑在本机的服务。
+   * 这类端点不需要 API Key，界面上单独分一组，并给出启动引导。
+   */
+  local?: boolean;
+  /** 本地服务的启动命令，照抄就能跑起来 */
+  command?: string;
+}
+
+export const PRESETS: Preset[] = [
   { name: '小米 MiMo', baseUrl: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2.5-pro' },
   // 注意：这里要的是 console.x.ai 的 API Key，和 SuperGrok 订阅是两回事，互不相通
   { name: 'xAI Grok', baseUrl: 'https://api.x.ai/v1', model: 'grok-4.5' },
@@ -194,5 +207,35 @@ export const PRESETS: Array<{ name: string; baseUrl: string; model: string }> = 
   { name: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen2.5-72B-Instruct' },
   { name: 'Moonshot', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
   { name: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus' },
-  { name: '本地 Ollama', baseUrl: 'http://localhost:11434/v1', model: 'qwen2.5' },
+  {
+    name: '本地 llama.cpp',
+    baseUrl: 'http://localhost:8080/v1',
+    // llama-server 不校验这个字段，填什么都会用已加载的模型；
+    // 想显示真名点「拉列表」即可
+    model: 'local-model',
+    local: true,
+    command: 'llama-server -m 你的模型.gguf -c 8192 --port 8080',
+  },
+  {
+    name: '本地 LM Studio',
+    baseUrl: 'http://localhost:1234/v1',
+    model: 'local-model',
+    local: true,
+    command: '在 LM Studio 的 Developer 页里启动 Local Server（默认 1234 端口）',
+  },
+  {
+    name: '本地 Ollama',
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'qwen2.5',
+    local: true,
+    command: 'ollama serve   # 然后 ollama pull qwen2.5',
+  },
+  {
+    name: '本地 vLLM',
+    baseUrl: 'http://localhost:8000/v1',
+    // vLLM 会校验模型名，必须和启动时的 --model 一致，点「拉列表」最省事
+    model: '',
+    local: true,
+    command: 'vllm serve 你的模型 --port 8000',
+  },
 ];
