@@ -1,12 +1,5 @@
 import type { ChatNode, NodeRole } from '../types';
-import {
-  buildChildIndex,
-  collectAncestors,
-  collectDescendants,
-  topoOrder,
-  type NodeMap,
-} from './context';
-import { computeLayout } from './autoLayout';
+import { buildChildIndex, topoOrder, type NodeMap } from './context';
 
 /**
  * 聚焦视图的一张卡片 = 一轮对话。
@@ -113,7 +106,7 @@ export interface MiniNode {
   x: number;
   y: number;
   role: NodeRole;
-  /** 在当前这条链上（也就是会发给模型的那些） */
+  /** 在主干上（也就是当前这条会发给模型的链） */
   onPath: boolean;
   current: boolean;
 }
@@ -134,92 +127,78 @@ export interface MiniGraph {
   height: number;
 }
 
-/** 迷你图的取材范围：当前这条链，加上挂在它上面的每一处分叉，以及它往下通向哪儿 */
-function neighbourhood(nodes: NodeMap, targetId: string): Set<string> {
-  const scope = collectAncestors(nodes, targetId);
-  for (const id of collectDescendants(nodes, targetId)) scope.add(id);
-
-  // 链上每个节点的孩子都算进来 —— 分叉正是从这些地方岔出去的，
-  // 不带上它们，导航图就又退化成一条直线
-  const childrenOf = buildChildIndex(nodes);
-  for (const id of [...scope]) {
-    for (const child of childrenOf.get(id) ?? []) scope.add(child);
-  }
-  return scope;
-}
+const ROW = 30;
+const COL = 24;
 
 /**
- * 把「当前这条链和它周围的分叉」排成一张可以画出来的小图。
+ * 画一棵极简的树：一条竖直的主干，外加几根岔出去的短枝。
  *
- * 这是聚焦视图里唯一能看出分支结构的地方 —— 牌堆本身是线性的，
- * 只画当前路径的话，这个视图就不知道自己身处一张图里。
+ * 这里刻意**不用 dagre**。上一版用了，主干会被它左右挪来挪去以求少交叉，
+ * 结果一条线画得歪歪扭扭，看着「复杂」—— 可这张图要说的事只有两件：
+ * 「我在这条链的第几节」和「哪儿还有别的路」。
+ *
+ * 所以主干写死一条直线（一张卡一个点，和牌堆一一对应），
+ * 岔路只画一节短枝挂在旁边，不再往下展开。看得懂比画得全重要。
  */
-export function buildMiniGraph(
-  nodes: NodeMap,
-  targetId: string | null,
-  size = 11,
-): MiniGraph {
-  const empty: MiniGraph = { nodes: [], edges: [], width: 0, height: 0 };
-  if (!targetId || !nodes[targetId]) return empty;
+export function buildMiniGraph(nodes: NodeMap, deck: Deck): MiniGraph {
+  if (deck.cards.length === 0) return { nodes: [], edges: [], width: 0, height: 0 };
 
-  const scope = neighbourhood(nodes, targetId);
-  const sub: NodeMap = {};
-  for (const id of scope) {
-    const node = nodes[id];
-    if (!node) continue;
-    sub[id] = { ...node, parentIds: node.parentIds.filter((p) => scope.has(p)) };
-  }
-  if (Object.keys(sub).length === 0) return empty;
-
-  const dimensions = new Map(Object.keys(sub).map((id) => [id, { width: size, height: size }]));
-  const positions = computeLayout(sub, { dimensions, nodeSep: 16, rankSep: 26 });
-
-  const xs = Object.values(positions).map((p) => p.x);
-  const ys = Object.values(positions).map((p) => p.y);
-  const minX = Math.min(...xs);
-  const minY = Math.min(...ys);
-
-  const path = collectAncestors(nodes, targetId);
-  const at = (id: string) => {
-    const p = positions[id];
-    return p ? { x: p.x - minX + size / 2, y: p.y - minY + size / 2 } : null;
-  };
+  const childrenOf = buildChildIndex(nodes);
+  const spineHeads = new Set(deck.cards.map((c) => c.nodeIds[0]!));
 
   const miniNodes: MiniNode[] = [];
-  for (const id of Object.keys(sub)) {
-    const p = at(id);
-    if (!p) continue;
-    miniNodes.push({
-      id,
-      x: p.x,
-      y: p.y,
-      role: sub[id]!.role,
-      onPath: path.has(id),
-      current: id === targetId,
-    });
-  }
-
   const miniEdges: MiniEdge[] = [];
-  for (const node of Object.values(sub)) {
-    for (const parentId of node.parentIds) {
-      const a = at(parentId);
-      const b = at(node.id);
-      if (!a || !b) continue;
-      miniEdges.push({
-        id: `${parentId}->${node.id}`,
-        x1: a.x,
-        y1: a.y,
-        x2: b.x,
-        y2: b.y,
-        onPath: path.has(parentId) && path.has(node.id),
-      });
+  let minX = 0;
+
+  deck.cards.forEach((card, i) => {
+    const headId = card.nodeIds[0]!;
+    const head = nodes[headId];
+    if (!head) return;
+
+    const y = i * ROW;
+    miniNodes.push({
+      id: card.nodeIds[card.nodeIds.length - 1]!,
+      x: 0,
+      y,
+      role: head.role,
+      onPath: true,
+      current: i === deck.index,
+    });
+
+    // 主干：上一节连到这一节
+    if (i > 0) {
+      miniEdges.push({ id: `spine-${i}`, x1: 0, y1: (i - 1) * ROW, x2: 0, y2: y, onPath: true });
     }
+
+    /*
+     * 岔路：这张卡的末节点下面，除了主干的下一节之外还挂着什么。
+     * 只画一节，不往下递归 —— 它要回答的是「这儿有岔路」，不是「岔路通向哪」。
+     */
+    const tail = card.nodeIds[card.nodeIds.length - 1]!;
+    const forks = (childrenOf.get(tail) ?? []).filter((id) => !spineHeads.has(id));
+    forks.forEach((forkId, k) => {
+      const fork = nodes[forkId];
+      if (!fork) return;
+      const fx = -(k + 1) * COL;
+      const fy = y + ROW * 0.6;
+      minX = Math.min(minX, fx);
+      miniNodes.push({ id: forkId, x: fx, y: fy, role: fork.role, onPath: false, current: false });
+      miniEdges.push({ id: `fork-${forkId}`, x1: 0, y1: y, x2: fx, y2: fy, onPath: false });
+    });
+  });
+
+  // 平移到非负坐标，SVG 才画得出来
+  const shift = -minX;
+  for (const n of miniNodes) n.x += shift;
+  for (const e of miniEdges) {
+    e.x1 += shift;
+    e.x2 += shift;
   }
 
   return {
     nodes: miniNodes,
     edges: miniEdges,
-    width: Math.max(...miniNodes.map((n) => n.x)) + size / 2,
-    height: Math.max(...miniNodes.map((n) => n.y)) + size / 2,
+    width: Math.max(...miniNodes.map((n) => n.x)),
+    height: Math.max(...miniNodes.map((n) => n.y)),
   };
 }

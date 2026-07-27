@@ -48,7 +48,7 @@ export function FocusView() {
   const current = deck.cards[deck.index];
   const choices = useMemo(() => nextChoices(nodes ?? {}, current), [nodes, current]);
   const prev = previousId(deck);
-  const mini = useMemo(() => buildMiniGraph(nodes ?? {}, selectedId), [nodes, selectedId]);
+  const mini = useMemo(() => buildMiniGraph(nodes ?? {}, deck), [nodes, deck]);
 
   useEffect(() => setDraft(''), [current?.id]);
 
@@ -268,15 +268,11 @@ function MiniMap({ graph, onPick }: { graph: MiniGraph; onPick: (id: string) => 
         aria-label="这条链周围的分支结构"
       >
         {graph.edges.map((e) => {
-          // 竖直方向的贝塞尔，和画布上的连线是同一种语言
-          const midY = (e.y1 + e.y2) / 2;
-          return (
-            <path
-              key={e.id}
-              className={e.onPath ? 'mini-edge on-path' : 'mini-edge'}
-              d={`M ${e.x1 + pad} ${e.y1 + pad} C ${e.x1 + pad} ${midY + pad}, ${e.x2 + pad} ${midY + pad}, ${e.x2 + pad} ${e.y2 + pad}`}
-            />
-          );
+          // 主干是直线，岔路才拐个弯 —— 主干弯来弯去正是上一版看着乱的原因
+          const d = e.onPath
+            ? `M ${e.x1 + pad} ${e.y1 + pad} L ${e.x2 + pad} ${e.y2 + pad}`
+            : `M ${e.x1 + pad} ${e.y1 + pad} C ${e.x1 + pad} ${(e.y1 + e.y2) / 2 + pad}, ${e.x2 + pad} ${(e.y1 + e.y2) / 2 + pad}, ${e.x2 + pad} ${e.y2 + pad}`;
+          return <path key={e.id} className={e.onPath ? 'mini-edge on-path' : 'mini-edge'} d={d} />;
         })}
         {graph.nodes.map((n) => (
           <circle

@@ -174,81 +174,111 @@ describe('previousId', () => {
 });
 
 describe('buildMiniGraph', () => {
-  it('没有选中节点时是空图', () => {
-    expect(buildMiniGraph({}, null).nodes).toEqual([]);
-    expect(buildMiniGraph(graph(node('a', 'user')), 'nope').nodes).toEqual([]);
+  const mini = (g: Record<string, ChatNode>, target: string) => buildMiniGraph(g, buildDeck(g, target));
+
+  it('空牌堆时是空图', () => {
+    expect(buildMiniGraph({}, { cards: [], index: -1 }).nodes).toEqual([]);
   });
 
-  /** 这是整个改动的理由：只画当前路径的话，导航图就是一条直线，看不出有分叉 */
-  it('把挂在链上的分叉一并带进来，而不只是当前路径', () => {
+  /** 主干写死一条直线，一张卡一个点 —— 这是「看得懂」的前提 */
+  it('主干是一条竖直的直线，x 全相同', () => {
     const g = graph(
-      node('q', 'user'),
-      node('a1', 'assistant', ['q']),
-      node('a2', 'assistant', ['q']), // 平行的另一版回答，不在当前路径上
-    );
-    const mini = buildMiniGraph(g, 'a1');
-    expect(mini.nodes.map((n) => n.id).sort()).toEqual(['a1', 'a2', 'q']);
-  });
-
-  it('标出哪些在当前路径上、哪个是当前节点', () => {
-    const g = graph(
-      node('q', 'user'),
-      node('a1', 'assistant', ['q']),
-      node('a2', 'assistant', ['q']),
-    );
-    const byId = Object.fromEntries(buildMiniGraph(g, 'a1').nodes.map((n) => [n.id, n]));
-    expect(byId.q!.onPath).toBe(true);
-    expect(byId.a1!.onPath).toBe(true);
-    expect(byId.a1!.current).toBe(true);
-    expect(byId.a2!.onPath).toBe(false);
-    expect(byId.a2!.current).toBe(false);
-  });
-
-  it('也带上当前节点的下游，能看出这条链通向哪儿', () => {
-    const g = graph(
-      node('q', 'user'),
-      node('a', 'assistant', ['q']),
-      node('q2', 'user', ['a']),
+      node('q1', 'user'),
+      node('a1', 'assistant', ['q1']),
+      node('q2', 'user', ['a1']),
       node('a2', 'assistant', ['q2']),
     );
-    expect(buildMiniGraph(g, 'a').nodes.map((n) => n.id).sort()).toEqual(['a', 'a2', 'q', 'q2']);
+    const spine = mini(g, 'a2').nodes.filter((n) => n.onPath);
+    expect(spine).toHaveLength(2);
+    expect(new Set(spine.map((n) => n.x)).size).toBe(1);
+    expect(spine[0]!.y).toBeLessThan(spine[1]!.y);
   });
 
-  it('边只连范围内的节点，不会指向图外', () => {
+  /** 这是整件事的理由：不画岔路的话，这张图就是一条毫无信息量的直线 */
+  it('主干旁边挂出岔路的短枝', () => {
     const g = graph(
       node('q', 'user'),
-      node('a', 'assistant', ['q']),
-      node('far', 'user', ['a']),
-      node('farther', 'assistant', ['far']),
+      node('a1', 'assistant', ['q']),
+      node('a2', 'assistant', ['q']), // 平行的另一版回答
     );
-    const mini = buildMiniGraph(g, 'a');
-    const ids = new Set(mini.nodes.map((n) => n.id));
-    for (const e of mini.edges) {
-      expect(ids.has(e.id.split('->')[0]!)).toBe(true);
-      expect(ids.has(e.id.split('->')[1]!)).toBe(true);
-    }
+    const forks = mini(g, 'a1').nodes.filter((n) => !n.onPath);
+    expect(forks.map((n) => n.id)).toEqual(['a2']);
   });
 
-  it('当前路径上的边被标出来', () => {
-    const g = graph(node('q', 'user'), node('a', 'assistant', ['q']), node('b', 'assistant', ['q']));
-    const mini = buildMiniGraph(g, 'a');
-    expect(mini.edges.find((e) => e.id === 'q->a')?.onPath).toBe(true);
-    expect(mini.edges.find((e) => e.id === 'q->b')?.onPath).toBe(false);
-  });
-
-  it('坐标非负，尺寸把所有点都框得住', () => {
+  it('岔路偏在主干一侧，不压在主干上', () => {
     const g = graph(
       node('q', 'user'),
       node('a1', 'assistant', ['q']),
       node('a2', 'assistant', ['q']),
-      node('m', 'user', ['a1', 'a2']),
     );
-    const mini = buildMiniGraph(g, 'm');
-    for (const n of mini.nodes) {
+    const m = mini(g, 'a1');
+    const spineX = m.nodes.find((n) => n.onPath)!.x;
+    expect(m.nodes.find((n) => !n.onPath)!.x).not.toBe(spineX);
+  });
+
+  it('同一处的多条岔路各占一列，不重叠', () => {
+    const g = graph(
+      node('q', 'user'),
+      node('a', 'assistant', ['q']),
+      node('f1', 'user', ['a']),
+      node('f2', 'user', ['a']),
+      node('f3', 'user', ['a']),
+    );
+    const forks = mini(g, 'a').nodes.filter((n) => !n.onPath);
+    expect(forks).toHaveLength(3);
+    expect(new Set(forks.map((n) => n.x)).size).toBe(3);
+  });
+
+  /** 只画一节。它要回答的是「这儿有岔路」，不是「岔路通向哪」 */
+  it('岔路只画一节，不往下展开', () => {
+    const g = graph(
+      node('q', 'user'),
+      node('a', 'assistant', ['q']),
+      node('f', 'user', ['a']),
+      node('deep', 'assistant', ['f']),
+      node('deeper', 'user', ['deep']),
+    );
+    const ids = mini(g, 'a').nodes.map((n) => n.id);
+    expect(ids).toContain('f');
+    expect(ids).not.toContain('deep');
+    expect(ids).not.toContain('deeper');
+  });
+
+  it('主干上的下一节不会被当成岔路重复画一遍', () => {
+    const g = graph(
+      node('q1', 'user'),
+      node('a1', 'assistant', ['q1']),
+      node('q2', 'user', ['a1']),
+      node('a2', 'assistant', ['q2']),
+    );
+    expect(mini(g, 'a2').nodes.filter((n) => !n.onPath)).toEqual([]);
+  });
+
+  it('标出当前是哪一节', () => {
+    const g = graph(
+      node('q1', 'user'),
+      node('a1', 'assistant', ['q1']),
+      node('q2', 'user', ['a1']),
+      node('a2', 'assistant', ['q2']),
+    );
+    const cur = mini(g, 'a1').nodes.filter((n) => n.current);
+    expect(cur).toHaveLength(1);
+    expect(cur[0]!.id).toBe('a1');
+  });
+
+  it('坐标非负，尺寸框得住所有点', () => {
+    const g = graph(
+      node('q', 'user'),
+      node('a', 'assistant', ['q']),
+      node('f1', 'user', ['a']),
+      node('f2', 'user', ['a']),
+    );
+    const m = mini(g, 'a');
+    for (const n of m.nodes) {
       expect(n.x).toBeGreaterThanOrEqual(0);
       expect(n.y).toBeGreaterThanOrEqual(0);
-      expect(n.x).toBeLessThanOrEqual(mini.width);
-      expect(n.y).toBeLessThanOrEqual(mini.height);
+      expect(n.x).toBeLessThanOrEqual(m.width);
+      expect(n.y).toBeLessThanOrEqual(m.height);
     }
   });
 });
