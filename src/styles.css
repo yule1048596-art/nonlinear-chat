@@ -2838,6 +2838,13 @@ body.is-connecting .handle {
   padding: 32px 24px 12px;
 }
 
+/*
+ * 每张卡的位置只由 --offset（离当前第几张）决定，翻页时它变一下，
+ * 剩下的交给 transition —— 卡片是真的往后退，不是新卡凭空闪出来。
+ *
+ * 上一版给前卡挂了 key={current.id}，翻一页整张卡卸载重挂、重放一遍
+ * 入场关键帧，那才是「动画生硬」的根源：动的不是牌堆，是替换。
+ */
 .focus-card {
   width: min(860px, 100%);
   height: min(560px, 100%);
@@ -2849,38 +2856,29 @@ body.is-connecting .handle {
   box-shadow: var(--shadow-3);
   overflow: hidden;
   grid-area: 1 / 1;
-  animation: focus-in 0.34s var(--ease) both;
+  transform-origin: 50% 100%;
+  /*
+   * 往上偏的量要盖过缩放吃掉的量：560px 的卡缩到 0.97 等于上下各收 8px，
+   * 位移太小的话后面几张会整个缩进前一张背后。
+   */
+  transform: translate(calc(var(--offset) * 12px), calc(var(--offset) * -20px))
+    scale(calc(1 - var(--offset) * 0.03));
+  opacity: calc(1 - var(--offset) * 0.28);
+  z-index: calc(10 - var(--offset));
+  transition: transform 0.42s var(--ease), opacity 0.42s var(--ease),
+    box-shadow 0.42s var(--ease);
 }
 
-/*
- * 新卡从下方稍微浮上来，同时整摞往后退一格。
- * 关键是位移小、时间短 —— 大开大合的动画看两次就烦了。
- */
-@keyframes focus-in {
-  from {
-    opacity: 0;
-    transform: translateY(14px) scale(0.985);
-  }
-}
-
-/*
- * 后面几张只是空壳，专门用来给「这是一摞」的实感。
- * 不渲染真实内容：它们被前面这张挡得只剩边角，渲染 Markdown 纯属浪费。
- */
 .focus-card.is-behind {
   pointer-events: none;
   box-shadow: var(--shadow-2);
-  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
-  /*
-   * 往上偏的量必须大于缩放吃掉的量，否则后面几张会整个缩进前一张背后 ——
-   * 560px 的卡缩到 0.97 就等于上下各收 8px，光靠 -10px 位移根本露不出来。
-   * 再往右带一点，堆叠感比纯垂直明显。
-   */
-  transform: translate(calc(var(--depth) * 10px), calc(var(--depth) * -22px))
-    scale(calc(1 - var(--depth) * 0.028));
-  opacity: calc(1 - var(--depth) * 0.2);
-  animation: none;
-  transition: transform 0.34s var(--ease), opacity 0.34s var(--ease);
+}
+
+/* 后面那几张只露边角，正文用不着看清 —— 淡出去反而更像一摞纸 */
+.focus-card.is-behind .focus-card-body {
+  opacity: 0.35;
+  filter: saturate(0.7);
+  transition: opacity 0.42s var(--ease);
 }
 
 .focus-card-head {
@@ -2958,58 +2956,81 @@ body.is-connecting .handle {
   border-style: dashed;
 }
 
-/* ---------- 右侧导航器 ---------- */
+/* ---------- 右侧的迷你结构图 ---------- */
 
-.focus-nav {
+/*
+ * 上一版这里是一列直上直下的圆点，只画当前路径 —— 等于把这个应用最要紧的
+ * 东西（它是一张图，不是一条线）从视图里删掉了。现在画的是当前这条链
+ * 加上挂在它身上的每一处分叉：亮的是会发给模型的，暗的是岔出去的别条路。
+ */
+.focus-minimap {
   position: absolute;
-  right: 26px;
+  right: 22px;
   top: 50%;
   transform: translateY(-50%);
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 12px;
+  pointer-events: none;
 }
 
-/* 用伪元素连成一条线，省掉一堆额外的 DOM */
-.focus-dot {
-  position: relative;
-  width: 9px;
-  height: 9px;
-  padding: 0;
-  border-radius: 50%;
-  border: 1.5px solid var(--text-3);
-  background: transparent;
+.focus-minimap svg {
+  overflow: visible;
+  pointer-events: auto;
+  /* 上限用 CSS 给，窗口一缩它自己会跟着收 */
+  max-height: min(56vh, 520px);
+  max-width: 170px;
+  width: auto;
+  height: auto;
+}
+
+.mini-edge {
+  fill: none;
+  stroke: var(--edge);
+  stroke-width: 1.1;
+  opacity: 0.55;
+}
+
+.mini-edge.on-path {
+  stroke: var(--accent);
+  stroke-width: 1.8;
+  opacity: 0.85;
+}
+
+.mini-node {
+  fill: var(--bg);
+  stroke: var(--text-3);
+  stroke-width: 1.4;
   cursor: pointer;
-  transition: transform 0.2s var(--ease), background 0.2s var(--ease),
-    border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+  transition: r 0.2s var(--ease), fill 0.2s var(--ease), stroke 0.2s var(--ease);
 }
 
-.focus-dot::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 100%;
-  width: 1px;
-  height: 12px;
-  background: var(--border-strong);
-  transform: translateX(-50%);
+.mini-node:hover {
+  stroke: var(--accent);
 }
 
-.focus-dot:last-child::before {
-  display: none;
+/* 在当前上下文里的用角色色填上，一眼看得出这条链由谁组成 */
+.mini-node.on-path {
+  fill: var(--role-color, var(--accent));
+  stroke: var(--role-color, var(--accent));
 }
 
-.focus-dot:hover {
-  border-color: var(--accent);
-  transform: scale(1.25);
+.mini-node.is-current {
+  fill: var(--accent);
+  stroke: var(--accent);
+  filter: drop-shadow(0 0 5px var(--accent));
 }
 
-.focus-dot.is-current {
-  background: var(--accent);
-  border-color: var(--accent);
-  transform: scale(1.5);
-  box-shadow: 0 0 0 4px var(--accent-soft);
+.mini-node.mm-user {
+  --role-color: var(--user);
+}
+.mini-node.mm-assistant {
+  --role-color: var(--assistant);
+}
+.mini-node.mm-system {
+  --role-color: var(--system);
+}
+.mini-node.mm-note {
+  --role-color: var(--note);
 }
 
 /* ---------- 底部操作条 ---------- */

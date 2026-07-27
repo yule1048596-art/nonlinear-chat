@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDeck, nextChoices, previousId } from './focus';
+import { buildDeck, buildMiniGraph, nextChoices, previousId } from './focus';
 import type { ChatNode, NodeRole } from '../types';
 
 let clock = 0;
@@ -170,5 +170,85 @@ describe('previousId', () => {
   it('已经在最早那轮时返回 null', () => {
     expect(previousId(buildDeck(chain(), 'a1'))).toBe(null);
     expect(previousId({ cards: [], index: -1 })).toBe(null);
+  });
+});
+
+describe('buildMiniGraph', () => {
+  it('没有选中节点时是空图', () => {
+    expect(buildMiniGraph({}, null).nodes).toEqual([]);
+    expect(buildMiniGraph(graph(node('a', 'user')), 'nope').nodes).toEqual([]);
+  });
+
+  /** 这是整个改动的理由：只画当前路径的话，导航图就是一条直线，看不出有分叉 */
+  it('把挂在链上的分叉一并带进来，而不只是当前路径', () => {
+    const g = graph(
+      node('q', 'user'),
+      node('a1', 'assistant', ['q']),
+      node('a2', 'assistant', ['q']), // 平行的另一版回答，不在当前路径上
+    );
+    const mini = buildMiniGraph(g, 'a1');
+    expect(mini.nodes.map((n) => n.id).sort()).toEqual(['a1', 'a2', 'q']);
+  });
+
+  it('标出哪些在当前路径上、哪个是当前节点', () => {
+    const g = graph(
+      node('q', 'user'),
+      node('a1', 'assistant', ['q']),
+      node('a2', 'assistant', ['q']),
+    );
+    const byId = Object.fromEntries(buildMiniGraph(g, 'a1').nodes.map((n) => [n.id, n]));
+    expect(byId.q!.onPath).toBe(true);
+    expect(byId.a1!.onPath).toBe(true);
+    expect(byId.a1!.current).toBe(true);
+    expect(byId.a2!.onPath).toBe(false);
+    expect(byId.a2!.current).toBe(false);
+  });
+
+  it('也带上当前节点的下游，能看出这条链通向哪儿', () => {
+    const g = graph(
+      node('q', 'user'),
+      node('a', 'assistant', ['q']),
+      node('q2', 'user', ['a']),
+      node('a2', 'assistant', ['q2']),
+    );
+    expect(buildMiniGraph(g, 'a').nodes.map((n) => n.id).sort()).toEqual(['a', 'a2', 'q', 'q2']);
+  });
+
+  it('边只连范围内的节点，不会指向图外', () => {
+    const g = graph(
+      node('q', 'user'),
+      node('a', 'assistant', ['q']),
+      node('far', 'user', ['a']),
+      node('farther', 'assistant', ['far']),
+    );
+    const mini = buildMiniGraph(g, 'a');
+    const ids = new Set(mini.nodes.map((n) => n.id));
+    for (const e of mini.edges) {
+      expect(ids.has(e.id.split('->')[0]!)).toBe(true);
+      expect(ids.has(e.id.split('->')[1]!)).toBe(true);
+    }
+  });
+
+  it('当前路径上的边被标出来', () => {
+    const g = graph(node('q', 'user'), node('a', 'assistant', ['q']), node('b', 'assistant', ['q']));
+    const mini = buildMiniGraph(g, 'a');
+    expect(mini.edges.find((e) => e.id === 'q->a')?.onPath).toBe(true);
+    expect(mini.edges.find((e) => e.id === 'q->b')?.onPath).toBe(false);
+  });
+
+  it('坐标非负，尺寸把所有点都框得住', () => {
+    const g = graph(
+      node('q', 'user'),
+      node('a1', 'assistant', ['q']),
+      node('a2', 'assistant', ['q']),
+      node('m', 'user', ['a1', 'a2']),
+    );
+    const mini = buildMiniGraph(g, 'm');
+    for (const n of mini.nodes) {
+      expect(n.x).toBeGreaterThanOrEqual(0);
+      expect(n.y).toBeGreaterThanOrEqual(0);
+      expect(n.x).toBeLessThanOrEqual(mini.width);
+      expect(n.y).toBeLessThanOrEqual(mini.height);
+    }
   });
 });
