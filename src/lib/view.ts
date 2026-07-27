@@ -46,6 +46,21 @@ export const MAP_TURN_HEIGHT = 108;
 export const MAP_NODE_SEP = 26;
 export const MAP_RANK_SEP = 46;
 
+/**
+ * 模型名在卡片上的显示形式。
+ *
+ * OpenRouter 这类聚合服务给的是 `anthropic/claude-sonnet-4.6` 这种带前缀的
+ * 全名，232px 宽的卡片放不下，而前缀是哪家从模型名本身就看得出来。
+ * 完整名字留在悬停提示里，不丢信息。
+ */
+export function modelLabel(model?: string): string {
+  const name = model?.trim();
+  if (!name) return '';
+  const tail = name.slice(name.lastIndexOf('/') + 1);
+  // 名字以斜杠结尾时切出来是空的，那还不如回退到原名
+  return tail || name;
+}
+
 export interface TurnPairing {
   /** assistant 节点 id → 它被并进的那个 user 节点 id。这些节点不再单独出卡 */
   mergedInto: Map<string, string>;

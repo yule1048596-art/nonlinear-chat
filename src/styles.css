@@ -2330,6 +2330,11 @@ body.is-connecting .handle {
   font-weight: 500;
   color: var(--text-2);
   letter-spacing: 0.01em;
+  /* 模型名可以很长（claude-sonnet-4-6 之类），挤不下时截断而不是把徽章顶出去 */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .map-summary {
@@ -2352,6 +2357,7 @@ body.is-connecting .handle {
 }
 
 .map-tokens {
+  flex: 0 0 auto;
   font-size: 10px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
@@ -2414,6 +2420,7 @@ body.is-connecting .handle {
 }
 
 .map-flag {
+  flex: 0 0 auto;
   font-size: 9.5px;
   padding: 1px 5px;
   border-radius: 4px;

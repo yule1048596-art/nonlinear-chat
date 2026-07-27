@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pairTurns, summarize } from './view';
+import { modelLabel, pairTurns, summarize } from './view';
 import type { ChatNode, NodeRole } from '../types';
 
 let clock = 0;
@@ -185,5 +185,31 @@ describe('pairTurns', () => {
 
   it('空图不出错', () => {
     expect(pairTurns({}).answerOf.size).toBe(0);
+  });
+});
+
+describe('modelLabel', () => {
+  it('普通模型名原样返回', () => {
+    expect(modelLabel('mimo-v2.5-pro')).toBe('mimo-v2.5-pro');
+  });
+
+  it('没有模型名时返回空串', () => {
+    expect(modelLabel(undefined)).toBe('');
+    expect(modelLabel('')).toBe('');
+    expect(modelLabel('   ')).toBe('');
+  });
+
+  /** OpenRouter 给的是带前缀的全名，232px 的卡片放不下 */
+  it('去掉聚合服务的前缀，只留模型本身', () => {
+    expect(modelLabel('anthropic/claude-sonnet-4.6')).toBe('claude-sonnet-4.6');
+    expect(modelLabel('accounts/fireworks/models/llama-v3')).toBe('llama-v3');
+  });
+
+  it('以斜杠结尾时回退到原名，不返回空', () => {
+    expect(modelLabel('weird/')).toBe('weird/');
+  });
+
+  it('去掉首尾空白', () => {
+    expect(modelLabel('  gpt-4o  ')).toBe('gpt-4o');
   });
 });

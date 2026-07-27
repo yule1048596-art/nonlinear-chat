@@ -3,7 +3,7 @@ import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useStore } from '../store/useStore';
 import { inContextByDefault, isInContext } from '../lib/context';
 import { estimateTokens, formatTokens } from '../lib/tokens';
-import { summarize } from '../lib/view';
+import { modelLabel, summarize } from '../lib/view';
 import type { NodeRole } from '../types';
 
 const ROLE_LABEL: Record<NodeRole, string> = {
@@ -64,6 +64,14 @@ export const MapNode = memo(function MapNode({ id, data, selected }: NodeProps) 
    * 「留着这个答歪的回答，但别带进下一轮」—— 只看提问的话这个状态就丢了。
    */
   const answerMuted = !!answer && !isInContext(answer);
+
+  /*
+   * 左上角标的是**回答这个问题的模型**，不是笼统的「AI」。
+   * 一个画布里经常几个模型并排比着用，只写「AI」等于什么都没说。
+   * 拿不到模型名（老数据、或者还没生成）时才退回角色名。
+   */
+  const model = modelLabel(answer?.model ?? (node.role === 'assistant' ? node.model : undefined));
+  const answerLabel = model || ROLE_LABEL.assistant;
   const summary = summarize(node.content, answer ? 40 : 64);
   const answerSummary = answer ? summarize(answer.content, 60) : '';
   const tokens = estimateTokens(node.content) + (answer ? estimateTokens(answer.content) : 0);
@@ -101,9 +109,9 @@ export const MapNode = memo(function MapNode({ id, data, selected }: NodeProps) 
 
       <header className="map-head">
         <span className="role-dot" />
-        <span className="map-role">
-          {ROLE_LABEL[node.role]}
-          {answer && <span className="map-arrow"> → {ROLE_LABEL.assistant}</span>}
+        <span className="map-role" title={answer?.model ?? node.model}>
+          {answer || node.role !== 'assistant' ? ROLE_LABEL[node.role] : answerLabel}
+          {answer && <span className="map-arrow"> → {answerLabel}</span>}
         </span>
         {streaming && <span className="pulse" title="生成中" />}
 
