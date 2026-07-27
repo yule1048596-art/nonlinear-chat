@@ -22,8 +22,8 @@ const ROLE_LABEL: Record<NodeRole, string> = {
   note: '批注',
 };
 
-/** 后面最多留几张。再多就是一堆看不清的边，还白白渲染内容 */
-const STACK_DEPTH = 2;
+/** 后面最多留几张。三张刚好摊得开一把扇形，再多就是一堆看不清的边 */
+const STACK_DEPTH = 3;
 
 /**
  * 聚焦视图：一次只摊开一轮对话。
@@ -92,9 +92,19 @@ export function FocusView() {
    * 现在每张卡的 key 是它自己的 id，翻页只是 --offset 变了，
    * 剩下的交给 transition，卡片是真的往后退。
    */
-  const visible = deck.cards
-    .map((card, i) => ({ card, offset: deck.index - i }))
-    .filter(({ offset }) => offset >= 0 && offset <= STACK_DEPTH);
+  /*
+   * 前方那一张（offset -1）也要渲染出来。
+   *
+   * 少了它，往回翻时当前这张只能从 DOM 里消失 —— 最该有过渡的那张
+   * （正在进/出最前面的那张）反而是硬切，后面几张滑得再顺也没用。
+   * 有了它，翻页才是一张滑出去、下一张滑上来。
+   */
+  const visible = [
+    ...deck.cards
+      .map((card, i) => ({ card, offset: deck.index - i }))
+      .filter(({ offset }) => offset >= 0 && offset <= STACK_DEPTH),
+    ...deck.ahead.map((card, k) => ({ card, offset: -(k + 1) })),
+  ];
 
   return (
     <div className="focus">
@@ -164,6 +174,29 @@ export function FocusView() {
   );
 }
 
+/**
+ * 一张卡在牌堆里的位置。
+ *
+ * 变换在这里算好写成内联样式，**不走 CSS 里的 calc(var(--offset))** ——
+ * 那条路不可靠：自定义属性没注册过，它变化时浏览器不会正常重跑 transform 的
+ * 过渡，实测值会整体滞后一拍（前卡顶着后一张的变换和透明度）。
+ * 内联字符串每次都是新的指定值，过渡必然触发。
+ *
+ * 斜堆叠：平移 + 旋转 + 微缩。光靠平移是「正着摞」，得偏很多才露得出来；
+ * 转一点角度之后，同样大小的卡片两个对角自然探出前卡，位移就能给得很小。
+ */
+function stackStyle(offset: number): React.CSSProperties {
+  // 还没轮到的那张停在「更靠前、更大一点」的位置等着，给翻页一个落点
+  if (offset < 0) {
+    return { transform: 'translateY(30px) scale(1.035)', opacity: 0, zIndex: 11 };
+  }
+  return {
+    transform: `translate(${offset * 9}px, ${offset * -12}px) rotate(${offset * -1.9}deg) scale(${(1 - offset * 0.022).toFixed(4)})`,
+    opacity: Math.max(0, 1 - offset * 0.24),
+    zIndex: 10 - offset,
+  };
+}
+
 /** 一张卡：标题 + 右对齐的提问 + 正文回答。offset 决定它在牌堆里的第几层 */
 function Card({ card, offset }: { card: FocusCard; offset: number }) {
   const nodes = useStore((s) => s.graph?.nodes);
@@ -180,16 +213,17 @@ function Card({ card, offset }: { card: FocusCard; offset: number }) {
     estimateTokens(lone?.content ?? '');
   const muted = [question, answer, lone].some((n) => n && !isInContext(n));
 
-  const classes = ['focus-card', offset > 0 ? 'is-behind' : '', muted ? 'is-muted' : '']
+  const classes = [
+    'focus-card',
+    offset > 0 ? 'is-behind' : '',
+    offset < 0 ? 'is-ahead' : '',
+    muted ? 'is-muted' : '',
+  ]
     .filter(Boolean)
     .join(' ');
 
   return (
-    <article
-      className={classes}
-      style={{ '--offset': offset } as React.CSSProperties}
-      aria-hidden={offset > 0}
-    >
+    <article className={classes} style={stackStyle(offset)} aria-hidden={offset !== 0}>
       <header className="focus-card-head">
         <h2>{title}</h2>
         <span className="spacer" />

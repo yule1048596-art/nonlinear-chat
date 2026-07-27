@@ -19,10 +19,22 @@ export interface FocusCard {
 }
 
 export interface Deck {
+  /** 从根到当前节点这条链，也就是真正发给模型的上下文 */
   cards: FocusCard[];
   /** 当前在最前面的是第几张。-1 表示牌堆是空的 */
   index: number;
+  /**
+   * 前方还没走到的那几张。
+   *
+   * 它们**不属于上下文链** —— 单独放一个字段就是为了不动 cards 的语义。
+   * 存在的理由是动画：往回翻时，当前这张的位置会滑到「前方」去，
+   * 前方没有位置的话它只能从 DOM 里消失，最该有过渡的那张反而是硬切。
+   */
+  ahead: FocusCard[];
 }
+
+/** 前方预览留几张。渲染上只用得到一张，多留无益 */
+const AHEAD = 1;
 
 /**
  * 把「从根到目标节点」这条链取成一摞卡片。
@@ -33,7 +45,7 @@ export interface Deck {
  * 最前面的一张永远是目标节点所在的卡，更早的几轮叠在它后面。
  */
 export function buildDeck(nodes: NodeMap, targetId: string | null): Deck {
-  if (!targetId || !nodes[targetId]) return { cards: [], index: -1 };
+  if (!targetId || !nodes[targetId]) return { cards: [], index: -1, ahead: [] };
 
   const chain = topoOrder(nodes, targetId);
   const childrenOf = buildChildIndex(nodes);
@@ -71,7 +83,29 @@ export function buildDeck(nodes: NodeMap, targetId: string | null): Deck {
 
   // 目标节点所在的那张排在最前
   const index = cards.findIndex((c) => c.nodeIds.includes(targetId));
-  return { cards, index: index === -1 ? cards.length - 1 : index };
+  const at = index === -1 ? cards.length - 1 : index;
+
+  /*
+   * 顺着「最早的那个孩子」往下再取几张当预览。
+   * 有岔路时挑哪条都不算错 —— 这几张只是给动画一个落点，
+   * 真要走哪条还是底部那个分支选择器说了算。
+   */
+  const ahead: FocusCard[] = [];
+  let tail = cards[at]?.nodeIds[cards[at]!.nodeIds.length - 1];
+  for (let k = 0; k < AHEAD && tail; k++) {
+    const next = (childrenOf.get(tail) ?? [])
+      .map((id) => nodes[id])
+      .filter((n): n is ChatNode => !!n)
+      .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1))[0];
+    if (!next) break;
+    const card = buildDeck(nodes, next.id);
+    const found = card.cards[card.index];
+    if (!found) break;
+    ahead.push(found);
+    tail = found.nodeIds[found.nodeIds.length - 1];
+  }
+
+  return { cards, index: at, ahead };
 }
 
 /**

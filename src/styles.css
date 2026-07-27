@@ -2856,22 +2856,25 @@ body.is-connecting .handle {
   box-shadow: var(--shadow-3);
   overflow: hidden;
   grid-area: 1 / 1;
-  transform-origin: 50% 100%;
-  /*
-   * 往上偏的量要盖过缩放吃掉的量：560px 的卡缩到 0.97 等于上下各收 8px，
-   * 位移太小的话后面几张会整个缩进前一张背后。
-   */
-  transform: translate(calc(var(--offset) * 12px), calc(var(--offset) * -20px))
-    scale(calc(1 - var(--offset) * 0.03));
-  opacity: calc(1 - var(--offset) * 0.28);
-  z-index: calc(10 - var(--offset));
-  transition: transform 0.42s var(--ease), opacity 0.42s var(--ease),
-    box-shadow 0.42s var(--ease);
+  /* 绕中心转，转出来的两个对角才会从前卡的两侧同时探出来 */
+  transform-origin: 50% 50%;
+  /* transform / opacity / z-index 由组件按 offset 算好内联给，见 stackStyle */
+  transition: transform 0.46s var(--ease), opacity 0.46s var(--ease),
+    box-shadow 0.46s var(--ease);
 }
 
 .focus-card.is-behind {
   pointer-events: none;
   box-shadow: var(--shadow-2);
+}
+
+/*
+ * 还没轮到的那一张，停在「更靠前、更大一点」的位置上等着（位置见 stackStyle）。
+ * 有它在，翻页才是一张滑出去、下一张滑上来；
+ * 不然当前这张会直接从 DOM 里消失，动画从最关键的那张开始就断了。
+ */
+.focus-card.is-ahead {
+  pointer-events: none;
 }
 
 /* 后面那几张只露边角，正文用不着看清 —— 淡出去反而更像一摞纸 */

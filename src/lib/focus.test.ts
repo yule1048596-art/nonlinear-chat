@@ -20,8 +20,8 @@ const ids = (deck: { cards: { id: string }[] }) => deck.cards.map((c) => c.id);
 
 describe('buildDeck', () => {
   it('没有选中节点时是空牌堆', () => {
-    expect(buildDeck(graph(node('a', 'user')), null)).toEqual({ cards: [], index: -1 });
-    expect(buildDeck({}, 'nope')).toEqual({ cards: [], index: -1 });
+    expect(buildDeck(graph(node('a', 'user')), null)).toEqual({ cards: [], index: -1, ahead: [] });
+    expect(buildDeck({}, 'nope')).toEqual({ cards: [], index: -1, ahead: [] });
   });
 
   it('一问一答合成一张卡', () => {
@@ -169,7 +169,7 @@ describe('previousId', () => {
 
   it('已经在最早那轮时返回 null', () => {
     expect(previousId(buildDeck(chain(), 'a1'))).toBe(null);
-    expect(previousId({ cards: [], index: -1 })).toBe(null);
+    expect(previousId({ cards: [], index: -1, ahead: [] })).toBe(null);
   });
 });
 
@@ -324,5 +324,51 @@ describe('buildMiniGraph', () => {
       expect(n.x).toBeLessThanOrEqual(m.width);
       expect(n.y).toBeLessThanOrEqual(m.height);
     }
+  });
+});
+
+describe('前方预览（给动画留落点）', () => {
+  const chain = () =>
+    graph(
+      node('q1', 'user'),
+      node('a1', 'assistant', ['q1']),
+      node('q2', 'user', ['a1']),
+      node('a2', 'assistant', ['q2']),
+      node('q3', 'user', ['a2']),
+      node('a3', 'assistant', ['q3']),
+    );
+
+  /**
+   * 这是整件事的理由：往回翻时，当前这张要滑到「前方」去。
+   * 前方没有位置的话它只能从 DOM 里消失，最该有过渡的那张反而是硬切。
+   */
+  it('停在中间时，前方有下一张', () => {
+    const deck = buildDeck(chain(), 'a2');
+    expect(deck.ahead.map((c) => c.id)).toEqual(['q3']);
+  });
+
+  it('已经在最后一张时，前方是空的', () => {
+    expect(buildDeck(chain(), 'a3').ahead).toEqual([]);
+  });
+
+  /** 预览不属于上下文链，不能混进 cards 里 */
+  it('预览不进 cards，上下文链的语义不变', () => {
+    const deck = buildDeck(chain(), 'a2');
+    expect(deck.cards.map((c) => c.id)).toEqual(['q1', 'q2']);
+    expect(deck.cards.map((c) => c.id)).not.toContain('q3');
+  });
+
+  it('有岔路时挑最早的那条当预览', () => {
+    const g = graph(
+      node('q', 'user'),
+      node('a', 'assistant', ['q']),
+      node('early', 'user', ['a']),
+      node('late', 'user', ['a']),
+    );
+    expect(buildDeck(g, 'a').ahead.map((c) => c.id)).toEqual(['early']);
+  });
+
+  it('空牌堆时前方也是空的', () => {
+    expect(buildDeck({}, null).ahead).toEqual([]);
   });
 });
