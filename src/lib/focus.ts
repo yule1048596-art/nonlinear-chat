@@ -1,5 +1,6 @@
 import type { ChatNode, NodeRole } from '../types';
-import { buildChildIndex, topoOrder, type NodeMap } from './context';
+import { buildChildIndex, collectAncestors, topoOrder, type NodeMap } from './context';
+import { pairTurns } from './view';
 
 /**
  * 聚焦视图的一张卡片 = 一轮对话。
@@ -106,7 +107,7 @@ export interface MiniNode {
   x: number;
   y: number;
   role: NodeRole;
-  /** 在主干上（也就是当前这条会发给模型的链） */
+  /** 在当前这条链上（也就是会发给模型的那些） */
   onPath: boolean;
   current: boolean;
 }
@@ -127,72 +128,77 @@ export interface MiniGraph {
   height: number;
 }
 
-const ROW = 30;
-const COL = 24;
+/** 编辑视图里卡片的大致中心相对于它的坐标 */
+const CARD_CX = 190;
+const CARD_CY = 60;
 
 /**
- * 画一棵极简的树：一条竖直的主干，外加几根岔出去的短枝。
+ * 把编辑视图整张图缩小成一堆圆点。
  *
- * 这里刻意**不用 dagre**。上一版用了，主干会被它左右挪来挪去以求少交叉，
- * 结果一条线画得歪歪扭扭，看着「复杂」—— 可这张图要说的事只有两件：
- * 「我在这条链的第几节」和「哪儿还有别的路」。
+ * 前两版都在自己排版 —— 先用 dagre，后来手写一条直脊加短枝 —— 结果都是
+ * 「另一张图」，跟用户在编辑视图里看到、亲手摆过的那张对不上，怎么画都别扭。
  *
- * 所以主干写死一条直线（一张卡一个点，和牌堆一一对应），
- * 岔路只画一节短枝挂在旁边，不再往下展开。看得懂比画得全重要。
+ * 这一版不排版了：**直接用编辑视图的坐标**，等比缩到导航栏里。
+ * 于是它就是那张画布的缩略图 —— 你在画布上怎么摆的，这儿就怎么显示，
+ * 有几棵树就是几棵，一一对应，不需要再去理解第二套布局。
+ *
+ * 唯一的抽象是问答合并：和地图视图共用 pairTurns，一问一答缩成一个圆。
  */
-export function buildMiniGraph(nodes: NodeMap, deck: Deck): MiniGraph {
-  if (deck.cards.length === 0) return { nodes: [], edges: [], width: 0, height: 0 };
+export function buildMiniGraph(nodes: NodeMap, selectedId: string | null): MiniGraph {
+  const empty: MiniGraph = { nodes: [], edges: [], width: 0, height: 0 };
+  const all = Object.values(nodes);
+  if (all.length === 0) return empty;
 
-  const childrenOf = buildChildIndex(nodes);
-  const spineHeads = new Set(deck.cards.map((c) => c.nodeIds[0]!));
+  const pairing = pairTurns(nodes);
+  const path = selectedId ? collectAncestors(nodes, selectedId) : new Set<string>();
 
-  const miniNodes: MiniNode[] = [];
-  const miniEdges: MiniEdge[] = [];
-  let minX = 0;
+  // 被并进提问的回答不再单独出圆点
+  const visible = all.filter((n) => !pairing.mergedInto.has(n.id));
+  if (visible.length === 0) return empty;
 
-  deck.cards.forEach((card, i) => {
-    const headId = card.nodeIds[0]!;
-    const head = nodes[headId];
-    if (!head) return;
+  const at = (n: ChatNode) => ({ x: n.position.x + CARD_CX, y: n.position.y + CARD_CY });
+  const points = new Map(visible.map((n) => [n.id, at(n)]));
 
-    const y = i * ROW;
-    miniNodes.push({
-      id: card.nodeIds[card.nodeIds.length - 1]!,
-      x: 0,
-      y,
-      role: head.role,
-      onPath: true,
-      current: i === deck.index,
-    });
+  const xs = [...points.values()].map((p) => p.x);
+  const ys = [...points.values()].map((p) => p.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
 
-    // 主干：上一节连到这一节
-    if (i > 0) {
-      miniEdges.push({ id: `spine-${i}`, x1: 0, y1: (i - 1) * ROW, x2: 0, y2: y, onPath: true });
-    }
-
-    /*
-     * 岔路：这张卡的末节点下面，除了主干的下一节之外还挂着什么。
-     * 只画一节，不往下递归 —— 它要回答的是「这儿有岔路」，不是「岔路通向哪」。
-     */
-    const tail = card.nodeIds[card.nodeIds.length - 1]!;
-    const forks = (childrenOf.get(tail) ?? []).filter((id) => !spineHeads.has(id));
-    forks.forEach((forkId, k) => {
-      const fork = nodes[forkId];
-      if (!fork) return;
-      const fx = -(k + 1) * COL;
-      const fy = y + ROW * 0.6;
-      minX = Math.min(minX, fx);
-      miniNodes.push({ id: forkId, x: fx, y: fy, role: fork.role, onPath: false, current: false });
-      miniEdges.push({ id: `fork-${forkId}`, x1: 0, y1: y, x2: fx, y2: fy, onPath: false });
-    });
+  const miniNodes: MiniNode[] = visible.map((n) => {
+    const p = points.get(n.id)!;
+    const answerId = pairing.answerOf.get(n.id);
+    return {
+      id: n.id,
+      x: p.x - minX,
+      y: p.y - minY,
+      role: n.role,
+      // 合并卡里只要有一头在链上，这个圆就算在链上
+      onPath: path.has(n.id) || (!!answerId && path.has(answerId)),
+      current: n.id === selectedId || answerId === selectedId,
+    };
   });
 
-  // 平移到非负坐标，SVG 才画得出来
-  const shift = -minX;
-  for (const n of miniNodes) n.x += shift;
-  for (const e of miniEdges) {
-    e.x1 += shift;
-    e.x2 += shift;
+  const miniEdges: MiniEdge[] = [];
+  const seen = new Set<string>();
+  for (const node of visible) {
+    for (const parentId of node.parentIds) {
+      // 父节点若是被并进去的回答，边改从那张卡（也就是提问）出发
+      const source = pairing.mergedInto.get(parentId) ?? parentId;
+      const a = points.get(source);
+      const b = points.get(node.id);
+      if (!a || !b || source === node.id) continue;
+      const id = `${source}->${node.id}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      miniEdges.push({
+        id,
+        x1: a.x - minX,
+        y1: a.y - minY,
+        x2: b.x - minX,
+        y2: b.y - minY,
+        onPath: path.has(source) && path.has(node.id),
+      });
+    }
   }
 
   return {

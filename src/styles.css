@@ -2976,30 +2976,33 @@ body.is-connecting .handle {
 .focus-minimap svg {
   overflow: visible;
   pointer-events: auto;
-  /* 上限用 CSS 给，窗口一缩它自己会跟着收 */
-  max-height: min(56vh, 520px);
-  max-width: 170px;
+  /* 上限用 CSS 再兜一道，窗口一缩它自己会跟着收 */
+  max-height: min(58vh, 470px);
+  max-width: 160px;
   width: auto;
   height: auto;
 }
 
+/*
+ * 线宽不在这里定。整张图是等比缩放的，线宽要按缩放反算才不会细成一根头发，
+ * 所以由组件用属性给 —— 而 CSS 规则的优先级高于表现属性，
+ * 这儿要是写了 stroke-width，属性就永远不生效（线会细到看不见）。
+ */
 .mini-edge {
   fill: none;
   stroke: var(--edge);
-  stroke-width: 1.1;
-  opacity: 0.55;
+  opacity: 0.6;
 }
 
 .mini-edge.on-path {
   stroke: var(--accent);
-  stroke-width: 1.8;
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
+/* 同上：stroke-width 交给组件按缩放算 */
 .mini-node {
   fill: var(--bg);
   stroke: var(--text-3);
-  stroke-width: 1.4;
   cursor: pointer;
   transition: r 0.2s var(--ease), fill 0.2s var(--ease), stroke 0.2s var(--ease);
 }

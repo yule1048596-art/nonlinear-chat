@@ -174,106 +174,111 @@ describe('previousId', () => {
 });
 
 describe('buildMiniGraph', () => {
-  const mini = (g: Record<string, ChatNode>, target: string) => buildMiniGraph(g, buildDeck(g, target));
+  /** 带坐标的节点：迷你图直接用编辑视图的坐标，不再自己排版 */
+  const at = (n: ChatNode, x: number, y: number): ChatNode => ({ ...n, position: { x, y } });
 
-  it('空牌堆时是空图', () => {
-    expect(buildMiniGraph({}, { cards: [], index: -1 }).nodes).toEqual([]);
+  it('空图返回空', () => {
+    expect(buildMiniGraph({}, null).nodes).toEqual([]);
   });
 
-  /** 主干写死一条直线，一张卡一个点 —— 这是「看得懂」的前提 */
-  it('主干是一条竖直的直线，x 全相同', () => {
-    const g = graph(
-      node('q1', 'user'),
-      node('a1', 'assistant', ['q1']),
-      node('q2', 'user', ['a1']),
-      node('a2', 'assistant', ['q2']),
-    );
-    const spine = mini(g, 'a2').nodes.filter((n) => n.onPath);
-    expect(spine).toHaveLength(2);
-    expect(new Set(spine.map((n) => n.x)).size).toBe(1);
-    expect(spine[0]!.y).toBeLessThan(spine[1]!.y);
+  /** 唯一的抽象：一问一答缩成一个圆，和地图视图共用 pairTurns */
+  it('一问一答合成一个圆点', () => {
+    const g = graph(at(node('q', 'user'), 0, 0), at(node('a', 'assistant', ['q']), 0, 200));
+    const m = buildMiniGraph(g, 'a');
+    expect(m.nodes.map((n) => n.id)).toEqual(['q']);
+    expect(m.nodes[0]!.current).toBe(true); // 选中回答时，那张合并卡就是当前
   });
 
-  /** 这是整件事的理由：不画岔路的话，这张图就是一条毫无信息量的直线 */
-  it('主干旁边挂出岔路的短枝', () => {
+  it('一问两答时三个都各自成点', () => {
     const g = graph(
-      node('q', 'user'),
-      node('a1', 'assistant', ['q']),
-      node('a2', 'assistant', ['q']), // 平行的另一版回答
+      at(node('q', 'user'), 0, 0),
+      at(node('a1', 'assistant', ['q']), -200, 200),
+      at(node('a2', 'assistant', ['q']), 200, 200),
     );
-    const forks = mini(g, 'a1').nodes.filter((n) => !n.onPath);
-    expect(forks.map((n) => n.id)).toEqual(['a2']);
+    expect(buildMiniGraph(g, 'a1').nodes.map((n) => n.id).sort()).toEqual(['a1', 'a2', 'q']);
   });
 
-  it('岔路偏在主干一侧，不压在主干上', () => {
+  /** 「有几棵树就显示几棵」：互不相连的部分也要在图里 */
+  it('画出全部节点，包括和当前链无关的另一棵树', () => {
     const g = graph(
-      node('q', 'user'),
-      node('a1', 'assistant', ['q']),
-      node('a2', 'assistant', ['q']),
+      at(node('q1', 'user'), 0, 0),
+      at(node('a1', 'assistant', ['q1']), 0, 200),
+      at(node('lone', 'user'), 800, 0), // 另一棵树，完全不相连
     );
-    const m = mini(g, 'a1');
-    const spineX = m.nodes.find((n) => n.onPath)!.x;
-    expect(m.nodes.find((n) => !n.onPath)!.x).not.toBe(spineX);
+    expect(buildMiniGraph(g, 'a1').nodes.map((n) => n.id).sort()).toEqual(['lone', 'q1']);
   });
 
-  it('同一处的多条岔路各占一列，不重叠', () => {
+  it('坐标沿用编辑视图的相对位置', () => {
     const g = graph(
-      node('q', 'user'),
-      node('a', 'assistant', ['q']),
-      node('f1', 'user', ['a']),
-      node('f2', 'user', ['a']),
-      node('f3', 'user', ['a']),
+      at(node('a', 'user'), 0, 0),
+      at(node('b', 'user'), 400, 0),
+      at(node('c', 'user'), 0, 300),
     );
-    const forks = mini(g, 'a').nodes.filter((n) => !n.onPath);
-    expect(forks).toHaveLength(3);
-    expect(new Set(forks.map((n) => n.x)).size).toBe(3);
+    const byId = Object.fromEntries(buildMiniGraph(g, 'a').nodes.map((n) => [n.id, n]));
+    expect(byId.b!.x).toBeGreaterThan(byId.a!.x);
+    expect(byId.c!.y).toBeGreaterThan(byId.a!.y);
+    expect(byId.b!.y).toBe(byId.a!.y);
   });
 
-  /** 只画一节。它要回答的是「这儿有岔路」，不是「岔路通向哪」 */
-  it('岔路只画一节，不往下展开', () => {
+  it('标出哪些在当前上下文链上', () => {
     const g = graph(
-      node('q', 'user'),
-      node('a', 'assistant', ['q']),
-      node('f', 'user', ['a']),
-      node('deep', 'assistant', ['f']),
-      node('deeper', 'user', ['deep']),
+      at(node('q', 'user'), 0, 0),
+      at(node('a1', 'assistant', ['q']), -200, 200),
+      at(node('a2', 'assistant', ['q']), 200, 200),
     );
-    const ids = mini(g, 'a').nodes.map((n) => n.id);
-    expect(ids).toContain('f');
-    expect(ids).not.toContain('deep');
-    expect(ids).not.toContain('deeper');
+    const byId = Object.fromEntries(buildMiniGraph(g, 'a1').nodes.map((n) => [n.id, n]));
+    expect(byId.q!.onPath).toBe(true);
+    expect(byId.a1!.onPath).toBe(true);
+    expect(byId.a2!.onPath).toBe(false);
   });
 
-  it('主干上的下一节不会被当成岔路重复画一遍', () => {
+  /** 回答被并进提问后，它的下游要改挂到提问上，否则边会指向一个不存在的圆点 */
+  it('被并进去的回答，它的出边改从提问出发', () => {
     const g = graph(
-      node('q1', 'user'),
-      node('a1', 'assistant', ['q1']),
-      node('q2', 'user', ['a1']),
-      node('a2', 'assistant', ['q2']),
+      at(node('q', 'user'), 0, 0),
+      at(node('a', 'assistant', ['q']), 0, 200),
+      at(node('next', 'user', ['a']), 0, 400),
     );
-    expect(mini(g, 'a2').nodes.filter((n) => !n.onPath)).toEqual([]);
+    const m = buildMiniGraph(g, 'next');
+    const ids = new Set(m.nodes.map((n) => n.id));
+    expect(m.edges.map((e) => e.id)).toEqual(['q->next']);
+    for (const e of m.edges) {
+      expect(ids.has(e.id.split('->')[0]!)).toBe(true);
+      expect(ids.has(e.id.split('->')[1]!)).toBe(true);
+    }
   });
 
-  it('标出当前是哪一节', () => {
+  /**
+   * 「同时挂着提问和它的回答」这种改挂后会重合的情况其实不可能出现：
+   * 那样提问就有两个孩子，pairTurns 根本不会合并它。这条把结论钉住 ——
+   * 否则以后有人放宽合并条件时，边会悄悄重复。
+   */
+  it('同时挂着提问和回答时不合并，三条边都在', () => {
     const g = graph(
-      node('q1', 'user'),
-      node('a1', 'assistant', ['q1']),
-      node('q2', 'user', ['a1']),
-      node('a2', 'assistant', ['q2']),
+      at(node('q', 'user'), 0, 0),
+      at(node('a', 'assistant', ['q']), 0, 200),
+      at(node('x', 'user', ['a', 'q']), 0, 400),
     );
-    const cur = mini(g, 'a1').nodes.filter((n) => n.current);
-    expect(cur).toHaveLength(1);
-    expect(cur[0]!.id).toBe('a1');
+    const m = buildMiniGraph(g, 'x');
+    expect(m.nodes.map((n) => n.id).sort()).toEqual(['a', 'q', 'x']);
+    expect(m.edges.map((e) => e.id).sort()).toEqual(['a->x', 'q->a', 'q->x']);
+  });
+
+  /** 父节点列表里有重复项（导入的脏数据）时，同一条边不该画两遍 */
+  it('重复的父节点只画一条边', () => {
+    const g = graph(
+      at(node('p', 'user'), 0, 0),
+      at(node('c', 'user', ['p', 'p']), 0, 200),
+    );
+    expect(buildMiniGraph(g, 'c').edges.map((e) => e.id)).toEqual(['p->c']);
   });
 
   it('坐标非负，尺寸框得住所有点', () => {
     const g = graph(
-      node('q', 'user'),
-      node('a', 'assistant', ['q']),
-      node('f1', 'user', ['a']),
-      node('f2', 'user', ['a']),
+      at(node('a', 'user'), -500, -300),
+      at(node('b', 'user'), 200, 400),
     );
-    const m = mini(g, 'a');
+    const m = buildMiniGraph(g, 'a');
     for (const n of m.nodes) {
       expect(n.x).toBeGreaterThanOrEqual(0);
       expect(n.y).toBeGreaterThanOrEqual(0);

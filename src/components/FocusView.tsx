@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store/useStore';
 import {
   buildDeck,
@@ -48,7 +48,7 @@ export function FocusView() {
   const current = deck.cards[deck.index];
   const choices = useMemo(() => nextChoices(nodes ?? {}, current), [nodes, current]);
   const prev = previousId(deck);
-  const mini = useMemo(() => buildMiniGraph(nodes ?? {}, deck), [nodes, deck]);
+  const mini = useMemo(() => buildMiniGraph(nodes ?? {}, selectedId), [nodes, selectedId]);
 
   useEffect(() => setDraft(''), [current?.id]);
 
@@ -230,50 +230,50 @@ function Card({ card, offset }: { card: FocusCard; offset: number }) {
 }
 
 /**
- * 右侧的迷你结构图。
+ * 右侧的迷你结构图 —— 就是编辑视图那张画布的缩略图。
  *
- * 上一版这里是一列直上直下的圆点，只画当前路径 —— 那等于把这个应用
- * 最要紧的东西（它是一张图，不是一条线）从视图里删掉了。
- * 现在画的是「当前这条链 + 挂在它上面的每一处分叉 + 它通向哪儿」，
- * 亮的是当前路径，暗的是岔出去的别的可能，点哪个跳哪个。
+ * 前两版都在自己排版（先 dagre、后手写直脊），画出来是「另一张图」，
+ * 和用户在画布上亲手摆过的那张对不上，怎么调都别扭。现在直接用画布坐标：
+ * 你怎么摆的，这儿就怎么显示，有几棵树就是几棵。
+ * 唯一的抽象是一问一答缩成一个圆。
  */
 function MiniMap({ graph, onPick }: { graph: MiniGraph; onPick: (id: string) => void }) {
   const nodes = useStore((s) => s.graph?.nodes);
-  const ref = useRef<SVGSVGElement>(null);
-
   if (graph.nodes.length <= 1) return null;
 
-  const pad = 10;
+  /*
+   * 坐标直接来自编辑视图，跨度可能有几千像素，先等比缩到导航栏这么大。
+   * 用 viewBox 让 SVG 自己缩，圆点半径再按缩放反算回去 ——
+   * 否则整张图一缩，圆点会小成看不见的针尖。
+   */
+  const pad = 14;
   const w = graph.width + pad * 2;
   const h = graph.height + pad * 2;
-
-  /*
-   * 必须给出实际宽高。只有 viewBox 的话 SVG 在 flex 容器里会塌成 0×0 ——
-   * 元素在、圆点也在，就是一个像素都画不出来。
-   *
-   * 这里给的是「固有尺寸」，真正的上限交给 CSS 的 vh/px ——
-   * 用 JS 读 window.innerHeight 既不响应窗口缩放，
-   * 在还没布局的时候还会读到 0，把整张图缩成零。
-   */
-  const scale = 2;
+  const BOX_W = 150;
+  const BOX_H = 460;
+  const fit = Math.min(BOX_W / w, BOX_H / h);
+  const r = 5 / fit;
 
   return (
     <div className="focus-minimap">
       <svg
-        ref={ref}
         viewBox={`0 0 ${w} ${h}`}
-        width={w * scale}
-        height={h * scale}
+        width={Math.round(w * fit)}
+        height={Math.round(h * fit)}
         role="group"
-        aria-label="这条链周围的分支结构"
+        aria-label="整张画布的结构"
       >
-        {graph.edges.map((e) => {
-          // 主干是直线，岔路才拐个弯 —— 主干弯来弯去正是上一版看着乱的原因
-          const d = e.onPath
-            ? `M ${e.x1 + pad} ${e.y1 + pad} L ${e.x2 + pad} ${e.y2 + pad}`
-            : `M ${e.x1 + pad} ${e.y1 + pad} C ${e.x1 + pad} ${(e.y1 + e.y2) / 2 + pad}, ${e.x2 + pad} ${(e.y1 + e.y2) / 2 + pad}, ${e.x2 + pad} ${e.y2 + pad}`;
-          return <path key={e.id} className={e.onPath ? 'mini-edge on-path' : 'mini-edge'} d={d} />;
-        })}
+        {graph.edges.map((e) => (
+          <line
+            key={e.id}
+            className={e.onPath ? 'mini-edge on-path' : 'mini-edge'}
+            x1={e.x1 + pad}
+            y1={e.y1 + pad}
+            x2={e.x2 + pad}
+            y2={e.y2 + pad}
+            strokeWidth={(e.onPath ? 2.2 : 1.4) / fit}
+          />
+        ))}
         {graph.nodes.map((n) => (
           <circle
             key={n.id}
@@ -287,7 +287,8 @@ function MiniMap({ graph, onPick }: { graph: MiniGraph; onPick: (id: string) => 
               .join(' ')}
             cx={n.x + pad}
             cy={n.y + pad}
-            r={n.current ? 5.5 : 3.4}
+            r={n.current ? r * 1.6 : r}
+            strokeWidth={1.6 / fit}
             onClick={() => onPick(n.id)}
           >
             <title>{summarize(nodes?.[n.id]?.content ?? '', 30) || ROLE_LABEL[n.role]}</title>
