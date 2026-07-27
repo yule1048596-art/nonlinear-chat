@@ -1,8 +1,9 @@
 /**
  * 视图模式。
  *
- * - `edit` 现在这个画布：完整卡片，能读能改
- * - `map`  地图视图：紧凑卡片重新排一遍，看结构而不是看内容
+ * - `edit`  画布：完整卡片，能读能改
+ * - `map`   地图：紧凑卡片重新排一遍，看结构而不是看内容
+ * - `focus` 聚焦：一次只摊开一轮对话，其余叠成一摞，专心读
  *
  * 地图视图用**自己的一套坐标**：节点只有 84px 高，却按 200 多像素高的卡片
  * 排版的话，每个节点上下都空着五六倍于自身的留白，边被拉成又长又细的折线，
@@ -14,13 +15,14 @@
  */
 import type { NodeMap } from './context';
 
-export type ViewMode = 'edit' | 'map';
+export type ViewMode = 'edit' | 'map' | 'focus';
 
 /** 和主题一样存 localStorage：这是纯视图偏好，不该进画布数据 */
 export const VIEW_KEY = 'nexus-view';
 
 export function loadViewMode(): ViewMode {
-  return localStorage.getItem(VIEW_KEY) === 'map' ? 'map' : 'edit';
+  const saved = localStorage.getItem(VIEW_KEY);
+  return saved === 'map' || saved === 'focus' ? saved : 'edit';
 }
 
 export function saveViewMode(mode: ViewMode): void {
@@ -30,7 +32,16 @@ export function saveViewMode(mode: ViewMode): void {
 export const VIEW_LABEL: Record<ViewMode, string> = {
   edit: '编辑',
   map: '地图',
+  focus: '聚焦',
 };
+
+export const VIEW_HINT: Record<ViewMode, string> = {
+  edit: '完整卡片，能读能改',
+  map: '压成一行，看整张图的结构',
+  focus: '一次一轮，专心读',
+};
+
+export const VIEW_ORDER: ViewMode[] = ['edit', 'map', 'focus'];
 
 /*
  * 地图视图的卡片尺寸是**固定**的：摘要按行数截断。

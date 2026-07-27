@@ -6,6 +6,7 @@ import { estimateMessageTokens, estimateTokens, formatTokens, IMAGE_TOKENS } fro
 import { applyThemeMode, loadThemeMode, watchSystemTheme, NEXT_MODE, type ThemeMode } from './lib/theme';
 import { subscribeToast, toast } from './lib/toast';
 import { Canvas } from './components/Canvas';
+import { FocusView } from './components/FocusView';
 import { Toolbar } from './components/Toolbar';
 import { GraphDrawer } from './components/GraphDrawer';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -121,6 +122,24 @@ function EmptyHint() {
   );
 }
 
+/**
+ * 画布区。
+ *
+ * 聚焦视图不是画布的一层浮层，而是整块换掉 —— React Flow 在后台留着
+ * 只会白白跟着重渲染，而且它那套滚轮/拖拽手势会和卡片抢事件。
+ */
+function CanvasArea({ onOpenPreview }: { onOpenPreview: () => void }) {
+  const viewMode = useStore((s) => s.viewMode);
+  if (viewMode === 'focus') return <FocusView />;
+  return (
+    <>
+      <Canvas />
+      <EmptyHint />
+      <ContextBar onOpen={onOpenPreview} />
+    </>
+  );
+}
+
 /** 对比面板的开关在 store 里，单独包一层免得 App 为它整体重渲染 */
 function BranchCompareHost() {
   const compareNodeId = useStore((s) => s.compareNodeId);
@@ -220,9 +239,7 @@ export default function App() {
           onOpenKnowledge={() => setKnowledgeOpen(true)}
         />
         <main className="canvas-wrap">
-          <Canvas />
-          <EmptyHint />
-          <ContextBar onOpen={() => setPreviewOpen(true)} />
+          <CanvasArea onOpenPreview={() => setPreviewOpen(true)} />
         </main>
         <GraphDrawer open={graphsOpen} onClose={() => setGraphsOpen(false)} />
         <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />

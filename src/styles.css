@@ -2815,3 +2815,316 @@ body.is-connecting .handle {
 .btn.quiet:hover:not(:disabled) {
   color: var(--text);
 }
+
+/* ============================================================
+   聚焦视图
+   ============================================================ */
+
+.focus {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.focus-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 32px 24px 12px;
+}
+
+.focus-card {
+  width: min(860px, 100%);
+  height: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  grid-area: 1 / 1;
+  animation: focus-in 0.34s var(--ease) both;
+}
+
+/*
+ * 新卡从下方稍微浮上来，同时整摞往后退一格。
+ * 关键是位移小、时间短 —— 大开大合的动画看两次就烦了。
+ */
+@keyframes focus-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+}
+
+/*
+ * 后面几张只是空壳，专门用来给「这是一摞」的实感。
+ * 不渲染真实内容：它们被前面这张挡得只剩边角，渲染 Markdown 纯属浪费。
+ */
+.focus-card.is-behind {
+  pointer-events: none;
+  box-shadow: var(--shadow-2);
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+  /*
+   * 往上偏的量必须大于缩放吃掉的量，否则后面几张会整个缩进前一张背后 ——
+   * 560px 的卡缩到 0.97 就等于上下各收 8px，光靠 -10px 位移根本露不出来。
+   * 再往右带一点，堆叠感比纯垂直明显。
+   */
+  transform: translate(calc(var(--depth) * 10px), calc(var(--depth) * -22px))
+    scale(calc(1 - var(--depth) * 0.028));
+  opacity: calc(1 - var(--depth) * 0.2);
+  animation: none;
+  transition: transform 0.34s var(--ease), opacity 0.34s var(--ease);
+}
+
+.focus-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 20px 24px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.focus-card-head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-model,
+.focus-tokens {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-card-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 24px 24px;
+}
+
+/* 提问靠右成一个气泡，和回答的正文拉开身份 */
+.focus-ask {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-bottom: 18px;
+}
+
+.focus-bubble {
+  max-width: 78%;
+  padding: 9px 14px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.focus-answer {
+  font-size: 14.5px;
+  line-height: 1.85;
+}
+
+.focus-lone {
+  border-left: 3px solid var(--role-color, var(--border));
+  padding-left: 14px;
+}
+
+.focus-role {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--role-color, var(--text-3));
+}
+
+.focus-card.is-muted {
+  border-style: dashed;
+}
+
+/* ---------- 右侧导航器 ---------- */
+
+.focus-nav {
+  position: absolute;
+  right: 26px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 用伪元素连成一条线，省掉一堆额外的 DOM */
+.focus-dot {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-3);
+  background: transparent;
+  cursor: pointer;
+  transition: transform 0.2s var(--ease), background 0.2s var(--ease),
+    border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+
+.focus-dot::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 1px;
+  height: 12px;
+  background: var(--border-strong);
+  transform: translateX(-50%);
+}
+
+.focus-dot:last-child::before {
+  display: none;
+}
+
+.focus-dot:hover {
+  border-color: var(--accent);
+  transform: scale(1.25);
+}
+
+.focus-dot.is-current {
+  background: var(--accent);
+  border-color: var(--accent);
+  transform: scale(1.5);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+/* ---------- 底部操作条 ---------- */
+
+.focus-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 24px 18px;
+  justify-content: center;
+}
+
+.focus-input {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  width: min(620px, 100%);
+  padding: 7px 8px 7px 14px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+  transition: border-color 0.16s var(--ease);
+}
+
+.focus-input:focus-within {
+  border-color: var(--accent);
+}
+
+.focus-input textarea {
+  flex: 1;
+  min-width: 0;
+  max-height: 120px;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.6;
+  padding: 4px 0;
+}
+
+.focus-input textarea::placeholder {
+  color: var(--text-3);
+}
+
+.focus-hint {
+  font-size: 11.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.focus-branches {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.focus-empty {
+  margin: auto;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 1.9;
+}
+
+.focus-empty h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.focus-empty p {
+  margin: 0;
+}
+
+/* ---------- 顶栏的三段视图控件 ---------- */
+
+.segmented {
+  display: flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.segment {
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+
+.segment:hover {
+  color: var(--text);
+}
+
+.segment.is-active {
+  background: var(--surface);
+  color: var(--accent);
+  font-weight: 500;
+  box-shadow: var(--shadow-1);
+}
+
+.segment:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

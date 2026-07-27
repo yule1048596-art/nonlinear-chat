@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { useStore } from '../store/useStore';
 import { MODE_ICON, MODE_LABEL, type ThemeMode } from '../lib/theme';
+import { VIEW_HINT, VIEW_LABEL, VIEW_ORDER } from '../lib/view';
 import { toast } from '../lib/toast';
 import { parseBackup } from '../lib/backup';
 import { downloadJson } from '../lib/download';
@@ -139,19 +140,25 @@ export function Toolbar({
 
       <span className="toolbar-sep" />
 
-      {/* 视图和面板单独一组：它们改变的是「看到什么」，和上面那些操作不是一回事 */}
+      {/*
+        * 三个视图是互斥的模式，用分段控件而不是三个独立开关 ——
+        * 一眼看得出有几种、现在在哪一种。
+        */}
+      <div className="segmented" role="group" aria-label="视图">
+        {VIEW_ORDER.map((mode) => (
+          <button
+            key={mode}
+            className={viewMode === mode ? 'segment is-active' : 'segment'}
+            aria-pressed={viewMode === mode}
+            title={`${VIEW_LABEL[mode]}视图：${VIEW_HINT[mode]}`}
+            onClick={() => setViewMode(mode)}
+          >
+            {VIEW_LABEL[mode]}
+          </button>
+        ))}
+      </div>
+
       <div className="toolbar-group">
-        <button
-          className={viewMode === 'map' ? 'btn on' : 'btn'}
-          onClick={() => setViewMode(viewMode === 'map' ? 'edit' : 'map')}
-          title={
-            viewMode === 'map'
-              ? '回到编辑视图：完整卡片，能读能改'
-              : '地图视图：每个节点压成一行，看结构不看内容'
-          }
-        >
-          {viewMode === 'map' ? '地图中' : '地图'}
-        </button>
         <button
           className={knowledgeCount ? 'btn on' : 'btn'}
           onClick={onOpenKnowledge}
