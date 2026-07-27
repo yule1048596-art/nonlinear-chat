@@ -1,3 +1,6 @@
+import type { ContentPart } from '../types';
+import { contentToText, countImages } from './attachments';
+
 /**
  * 粗略的 token 估算。
  *
@@ -26,9 +29,22 @@ export function estimateTokens(text: string): number {
   return Math.ceil(cjk * CJK_TOKENS_PER_CHAR + rest / LATIN_CHARS_PER_TOKEN);
 }
 
-export function estimateMessageTokens(messages: Array<{ content: string }>): number {
-  // 每条消息在 chat 模板里还要包一层角色标记，按经验补 4 个
-  return messages.reduce((sum, m) => sum + estimateTokens(m.content) + 4, 0);
+/**
+ * 一张图占多少 token。
+ *
+ * 各家算法不同（OpenAI 按 512px 瓦片数，低细节固定 85），而且要真算就得先解出
+ * 图片尺寸 —— 状态栏那个数只需要量级对，取一个中间的常数就够了。
+ */
+export const IMAGE_TOKENS = 800;
+
+export function estimateMessageTokens(
+  messages: Array<{ content: string | ContentPart[] }>,
+): number {
+  return messages.reduce((sum, m) => {
+    // 每条消息在 chat 模板里还要包一层角色标记，按经验补 4 个
+    const text = estimateTokens(contentToText(m.content)) + 4;
+    return sum + text + countImages(m.content) * IMAGE_TOKENS;
+  }, 0);
 }
 
 /** 1234 → "1.2k"，状态栏放不下完整数字 */

@@ -1,8 +1,8 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { useStore } from './store/useStore';
-import { buildContext } from './lib/context';
-import { estimateMessageTokens, formatTokens } from './lib/tokens';
+import { buildContext, collectAncestors } from './lib/context';
+import { estimateMessageTokens, estimateTokens, formatTokens, IMAGE_TOKENS } from './lib/tokens';
 import { applyThemeMode, loadThemeMode, watchSystemTheme, NEXT_MODE, type ThemeMode } from './lib/theme';
 import { subscribeToast, toast } from './lib/toast';
 import { Canvas } from './components/Canvas';
@@ -37,6 +37,7 @@ function ContextBar({ onOpen }: { onOpen: () => void }) {
    * 晚几十毫秒更新完全无所谓，卡住画布才是问题。
    */
   const deferredNodes = useDeferredValue(nodes);
+  const attachments = useStore((s) => s.attachments);
 
   const stats = useMemo(() => {
     if (!deferredNodes || !selectedId || !deferredNodes[selectedId]) return null;
@@ -44,12 +45,26 @@ function ContextBar({ onOpen }: { onOpen: () => void }) {
       systemPrompt: settings.systemPrompt,
       limit: settings.contextLimit,
     });
+    /*
+     * 附件的 data URI 要异步读 Blob，状态栏是同步算的，拿不到。
+     * 但估算 token 只需要「几张图 + 多少字」，这两样在附件记录里现成就有 ——
+     * 不算进去的话，挂了图的那一发会被少报好几百 token，那比不显示更误导。
+     */
+    const chain = collectAncestors(deferredNodes, selectedId);
+    let extra = 0;
+    let images = 0;
+    for (const att of attachments) {
+      if (!chain.has(att.nodeId)) continue;
+      if (att.kind === 'image') images++;
+      else extra += estimateTokens(att.text ?? '');
+    }
     return {
       count: messages.filter((m) => m.role !== 'system').length,
       hasSystem: messages.some((m) => m.role === 'system'),
-      tokens: estimateMessageTokens(messages),
+      images,
+      tokens: estimateMessageTokens(messages) + extra + images * IMAGE_TOKENS,
     };
-  }, [deferredNodes, selectedId, settings.systemPrompt, settings.contextLimit]);
+  }, [deferredNodes, selectedId, settings.systemPrompt, settings.contextLimit, attachments]);
 
   if (!stats) return null;
 
@@ -65,7 +80,14 @@ function ContextBar({ onOpen }: { onOpen: () => void }) {
     >
       <span className="dot" />
       这一发会带上 <b>{stats.count}</b> 条消息
-      {stats.hasSystem && ' + system'} · 约 <b>{formatTokens(stats.tokens)}</b> tokens
+      {stats.hasSystem && ' + system'}
+      {stats.images > 0 && (
+        <>
+          {' + '}
+          <b>{stats.images}</b> 张图
+        </>
+      )}{' '}
+      · 约 <b>{formatTokens(stats.tokens)}</b> tokens
       {knowledgeOn && (
         <span className="context-bar-kb">＋知识库最多 {topK} 段（未计入）</span>
       )}

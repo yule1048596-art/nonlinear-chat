@@ -1,5 +1,6 @@
 import type { ChatMessage, ChatNode, NodeRole } from '../types';
 import { formatKnowledgeBlock, type RetrievedChunk } from './knowledge';
+import { buildUserContent, type ResolvedAttachment } from './attachments';
 
 export type NodeMap = Record<string, ChatNode>;
 
@@ -131,6 +132,20 @@ export const EXCLUDE_LABEL: Record<ExcludeReason, string> = {
  * 节点被排除的原因；返回 null 表示会进上下文。
  * 顺序即优先级，UI 上显示的理由要和实际生效的那条一致。
  */
+/**
+ * 带着附件的节点不算空。
+ *
+ * 「只丢一张图进去，一个字不写」是很常见的用法，正文为空就被跳过的话
+ * 那张图永远发不出去。
+ *
+ * assistant 刻意不算在内：重新生成靠的正是「先清空内容，让节点把自己排除出
+ * 自己的上下文」，assistant 节点要是能靠附件绕过这条判断，那条路径就断了。
+ * 反正模型的回答里也不存在附件。
+ */
+function hasAttachments(node: ChatNode): boolean {
+  return node.role !== 'assistant' && (node.attachmentIds?.length ?? 0) > 0;
+}
+
 export function excludeReason(node: ChatNode): ExcludeReason | null {
   if (node.contextMode === 'exclude') return 'muted';
   /*
@@ -138,7 +153,7 @@ export function excludeReason(node: ChatNode): ExcludeReason | null {
    * 正是靠它把自己排除出自己的上下文，让首次生成和重新生成共用一条代码路径。
    * 若 include 能强行把空节点塞进去，那条路径就断了。
    */
-  if (!node.content.trim()) return 'empty';
+  if (!node.content.trim() && !hasAttachments(node)) return 'empty';
   if (node.status === 'error') return 'error';
   if (node.contextMode === 'include') return null;
   return inContextByDefault(node.role) ? null : 'note';
@@ -173,6 +188,12 @@ export interface BuildContextOptions {
    * 这个函数得保持同步且无副作用，预览面板才能随手调。
    */
   knowledge?: RetrievedChunk[];
+  /**
+   * 节点 id → 已经取好 data URI 的附件。
+   * 和知识库同理：读 Blob 是异步的，在外面做完再传进来，
+   * 这个函数得保持同步且无副作用，预览面板才能随手调。
+   */
+  attachments?: Map<string, ResolvedAttachment[]>;
 }
 
 export interface ContextEntry {
@@ -235,10 +256,14 @@ export function explainContext(
       systemSources.push(node.id);
     } else {
       // 批注走到这里说明被显式设成了 include，当成 user 发言
+      const isAssistant = node.role === 'assistant';
       body.push({
         message: {
-          role: node.role === 'assistant' ? 'assistant' : 'user',
-          content: node.content,
+          role: isAssistant ? 'assistant' : 'user',
+          // 只有用户侧的消息能带附件 —— 模型的回答里不存在「附件」这回事
+          content: isAssistant
+            ? node.content
+            : buildUserContent(node.content, options.attachments?.get(node.id)),
         },
         sourceIds: [node.id],
       });

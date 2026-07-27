@@ -7,6 +7,7 @@ import { findSiblings } from '../lib/markdown';
 import type { NodeRole } from '../types';
 import { ContextMenu, type MenuAnchor } from './ContextMenu';
 import { Markdown } from './Markdown';
+import { AttachButton, NodeAttachments } from './NodeAttachments';
 
 /**
  * 可互相切换的节点类型。assistant 刻意排除在外：它的内容是模型生成的，
@@ -231,6 +232,8 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
               )}
             </>
           )}
+          {/* 附件条紧贴正文下方：它是这条消息的一部分，不是操作栏上的按钮 */}
+          <NodeAttachments nodeId={id} />
           {node.error && <div className="node-error">{node.error}</div>}
         </div>
       )}
@@ -246,6 +249,8 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
             发送
           </button>
         )}
+        {/* 只有用户侧的消息能带附件 —— 模型的回答里不存在这回事 */}
+        {isText && <AttachButton nodeId={id} />}
         {node.role === 'assistant' &&
           (streaming ? (
             <button className="btn solid" onClick={() => stop(id)}>

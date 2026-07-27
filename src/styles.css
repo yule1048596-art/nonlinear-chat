@@ -2669,3 +2669,103 @@ body.is-connecting .handle {
 .local-hint .hint.list {
   margin-bottom: 0;
 }
+
+/* ============================================================
+   节点附件
+   ============================================================ */
+
+.attach-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.attach-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+/* 图片直接出缩略图 —— 文件名对图片来说几乎没有信息量 */
+.attach-chip.is-image {
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+
+.attach-chip.is-image img {
+  display: block;
+  width: 88px;
+  height: 66px;
+  object-fit: cover;
+}
+
+.attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-meta {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.attach-remove {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 3px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.attach-remove:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+/* 图片上的删除按钮压在右上角，平时半透明，免得挡住画面 */
+.attach-chip.is-image .attach-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  backdrop-filter: blur(3px);
+  opacity: 0;
+  transition: opacity 0.14s;
+}
+
+.attach-chip.is-image:hover .attach-remove {
+  opacity: 1;
+}
+
+/* ---------- 上下文预览里的图片 ---------- */
+
+.preview-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0 24px;
+}
+
+.preview-images img {
+  width: 108px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}

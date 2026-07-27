@@ -9,7 +9,8 @@ import {
   topoOrder,
   wouldCreateCycle,
 } from './context';
-import type { ChatNode, NodeRole } from '../types';
+import { contentToText, type ResolvedAttachment } from './attachments';
+import type { ChatMessage, ChatNode, NodeRole } from '../types';
 
 let clock = 0;
 
@@ -31,8 +32,8 @@ function graph(...nodes: ChatNode[]) {
 }
 
 const roles = (nodes: ChatNode[]) => nodes.map((n) => n.id);
-const texts = (msgs: { role: string; content: string }[]) =>
-  msgs.map((m) => `${m.role}:${m.content}`);
+const texts = (msgs: ChatMessage[]) =>
+  msgs.map((m) => `${m.role}:${contentToText(m.content)}`);
 
 describe('topoOrder', () => {
   it('沿着单链把祖先按顺序排出来', () => {
@@ -505,5 +506,96 @@ describe('collectDescendants', () => {
     );
     expect([...collectDescendants(g, 'x')].sort()).toEqual(['x', 'y', 'z']);
     expect(collectDescendants(g, 'x').has('other')).toBe(false);
+  });
+});
+
+describe('附件注入', () => {
+  const convo = () =>
+    graph(node('u1', 'user', '这张图里是什么？'), node('a1', 'assistant', '答', ['u1']));
+
+  const img = (id: string): ResolvedAttachment => ({
+    id,
+    name: `${id}.png`,
+    kind: 'image',
+    dataUrl: `data:image/png;base64,${id}`,
+  });
+
+  it('不传附件时和以前完全一样', () => {
+    const g = convo();
+    expect(buildContext(g, 'a1')).toEqual(buildContext(g, 'a1', { attachments: new Map() }));
+  });
+
+  it('图片挂到对应节点的消息上', () => {
+    const out = buildContext(convo(), 'a1', {
+      attachments: new Map([['u1', [img('x')]]]),
+    });
+    expect(out[0]!.content).toEqual([
+      { type: 'text', text: '这张图里是什么？' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,x' } },
+    ]);
+  });
+
+  /** 模型的回答里不存在「附件」这回事，挂错了会发出去一个非法的 assistant 消息 */
+  it('assistant 消息永远不带附件', () => {
+    const g = graph(
+      node('u1', 'user', '问'),
+      node('a1', 'assistant', '答', ['u1']),
+      node('u2', 'user', '再问', ['a1']),
+    );
+    const out = buildContext(g, 'u2', { attachments: new Map([['a1', [img('y')]]]) });
+    expect(out[1]!.content).toBe('答');
+  });
+
+  it('文本附件展开进正文，仍然是纯字符串', () => {
+    const out = buildContext(convo(), 'a1', {
+      attachments: new Map([['u1', [{ id: 't', name: '料.md', kind: 'text' as const, text: '材料正文' }]]]),
+    });
+    expect(typeof out[0]!.content).toBe('string');
+    expect(out[0]!.content).toContain('材料正文');
+  });
+
+  it('带附件时 buildContext 仍等于 explainContext 的 entries', () => {
+    const g = convo();
+    const opts = { attachments: new Map([['u1', [img('z')]]]) };
+    expect(buildContext(g, 'a1', opts)).toEqual(
+      explainContext(g, 'a1', opts).entries.map((e) => e.message),
+    );
+  });
+});
+
+describe('附件与「空节点」的判定', () => {
+  const img = (id: string): ResolvedAttachment => ({
+    id,
+    name: `${id}.png`,
+    kind: 'image',
+    dataUrl: `data:image/png;base64,${id}`,
+  });
+
+  /** 「只丢一张图，一个字不写」是常见用法，正文为空不该让这张图发不出去 */
+  it('只有附件没有正文的提问仍然会进上下文', () => {
+    const q = node('u1', 'user', '');
+    q.attachmentIds = ['x'];
+    const g = graph(q, node('a1', 'assistant', '', ['u1']));
+    const out = buildContext(g, 'a1', { attachments: new Map([['u1', [img('x')]]]) });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.content).toEqual([
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,x' } },
+    ]);
+  });
+
+  /**
+   * 重新生成靠的正是「先清空内容，把节点排除出自己的上下文」。
+   * assistant 要是能靠 attachmentIds 绕过这条，那条路径就断了。
+   */
+  it('assistant 节点即使挂着附件，清空内容后仍算空', () => {
+    const a = node('a1', 'assistant', '', ['u1']);
+    a.attachmentIds = ['y'];
+    const g = graph(node('u1', 'user', '问'), a);
+    expect(texts(buildContext(g, 'a1'))).toEqual(['user:问']);
+  });
+
+  it('没有附件的空提问照样被跳过', () => {
+    const g = graph(node('u1', 'user', ''), node('a1', 'assistant', '', ['u1']));
+    expect(buildContext(g, 'a1')).toEqual([]);
   });
 });

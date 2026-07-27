@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type {
+  Attachment,
   ChatMessage,
   ChatNode,
   EmbeddingSettings,
@@ -13,6 +14,7 @@ import type {
 } from '../types';
 import {
   buildContext,
+  collectAncestors,
   collectDescendants,
   migrateContextMode,
   wouldCreateCycle,
@@ -20,7 +22,16 @@ import {
 } from '../lib/context';
 import { DEFAULT_EMBEDDING, EmbeddingError, embedOne, type EmbeddingConfig } from '../lib/embeddings';
 import { isLocalUrl } from '../lib/endpoint';
+import {
+  blobToDataUrl,
+  contentToText,
+  detectAttachmentKind,
+  formatBytes,
+  MAX_IMAGE_BYTES,
+  type ResolvedAttachment,
+} from '../lib/attachments';
 import { indexFile } from '../lib/indexer';
+import { parseFile } from '../lib/parsers';
 import { retrieve, type RetrievedChunk } from '../lib/knowledge';
 import { loadViewMode, saveViewMode, type ViewMode } from '../lib/view';
 import { emptyHistory, record, redo as redoStep, undo as undoStep, type StepResult } from '../lib/history';
@@ -100,10 +111,30 @@ async function loadChunks(graphId: string): Promise<KnowledgeChunk[]> {
   return chunks;
 }
 
+/**
+ * 附件转成 data URI 之后缓存起来。
+ *
+ * 二进制在 IndexedDB 里是原样的 Blob，只有发请求那一刻才需要 base64。
+ * 同一张图在一条链上可能被多轮对话反复带上，每次重编码是白费力气。
+ */
+const dataUrlCache = new Map<string, string>();
+
+async function resolveAttachment(att: Attachment): Promise<ResolvedAttachment> {
+  if (att.kind === 'text') {
+    return { id: att.id, name: att.name, kind: 'text', text: att.text };
+  }
+  let dataUrl = dataUrlCache.get(att.id);
+  if (!dataUrl) {
+    dataUrl = await blobToDataUrl(att.blob);
+    dataUrlCache.set(att.id, dataUrl);
+  }
+  return { id: att.id, name: att.name, kind: 'image', dataUrl };
+}
+
 /** 检索用的查询词就是这次真正要问的那句话 */
 function lastUserText(messages: ChatMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === 'user') return messages[i]!.content;
+    if (messages[i]!.role === 'user') return contentToText(messages[i]!.content);
   }
   return '';
 }
@@ -219,6 +250,18 @@ interface State {
   /** 检索。失败会抛出，由调用方决定是报错还是忽略 */
   retrieveKnowledge: (query: string) => Promise<RetrievedChunk[]>;
 
+  /** 当前画布的附件。二进制存在单独的表里，这里拿的是完整记录（含 Blob） */
+  attachments: Attachment[];
+  refreshAttachments: () => Promise<void>;
+  /** 给某个节点挂附件。返回成功数和失败明细 —— 一个坏文件不该拖累其余的 */
+  addAttachments: (
+    nodeId: string,
+    files: File[],
+  ) => Promise<{ ok: number; failed: { name: string; error: string }[] }>;
+  removeAttachment: (attachmentId: string) => Promise<void>;
+  /** 把这些节点的附件解析成可发送的形式。预览面板和 run() 共用 */
+  resolveAttachments: (nodeIds: Set<string>) => Promise<Map<string, ResolvedAttachment[]> | undefined>;
+
   send: (userNodeId: string) => Promise<void>;
   regenerate: (assistantId: string) => Promise<void>;
   branchRegenerate: (assistantId: string) => Promise<void>;
@@ -306,10 +349,26 @@ export const useStore = create<State>((set, get) => {
     void db.saveSettings(settings);
   };
 
-  /** 换画布之后：知识库归属画布，缓存和列表都得跟着换 */
+  /** 换画布之后：知识库和附件都归属画布，缓存和列表都得跟着换 */
   const afterGraphSwitch = async () => {
     invalidateChunks();
+    dataUrlCache.clear();
     await get().refreshKnowledge();
+    await get().refreshAttachments();
+  };
+
+  /** 把这条链上用到的附件解析成可直接发送的形式 */
+  const resolveAttachmentsFor = async (nodeIds: Set<string>) => {
+    const list = get().attachments.filter((a) => nodeIds.has(a.nodeId));
+    if (!list.length) return undefined;
+    const map = new Map<string, ResolvedAttachment[]>();
+    for (const att of list) {
+      const resolved = await resolveAttachment(att);
+      const bucket = map.get(att.nodeId);
+      if (bucket) bucket.push(resolved);
+      else map.set(att.nodeId, [resolved]);
+    }
+    return map;
   };
 
   const embeddingConfig = (): EmbeddingConfig => {
@@ -374,7 +433,15 @@ export const useStore = create<State>((set, get) => {
     );
 
     const { settings } = get();
-    const base = { systemPrompt: settings.systemPrompt, limit: settings.contextLimit };
+    // 附件要读 Blob 转 data URI，是异步的，所以先解析好再交给同步的 buildContext
+    const attachments = await resolveAttachmentsFor(
+      collectAncestors(get().graph!.nodes, assistantId),
+    );
+    const base = {
+      systemPrompt: settings.systemPrompt,
+      limit: settings.contextLimit,
+      attachments,
+    };
     let messages = buildContext(get().graph!.nodes, assistantId, base);
 
     if (!messages.some((m) => m.role !== 'system')) {
@@ -988,6 +1055,110 @@ export const useStore = create<State>((set, get) => {
         enabledFileIds: new Set(files.map((f) => f.id)),
         fileNames: new Map(files.map((f) => [f.id, f.name])),
       });
+    },
+
+    attachments: [],
+
+    resolveAttachments: (nodeIds) => resolveAttachmentsFor(nodeIds),
+
+    async refreshAttachments() {
+      const graphId = get().graph?.id;
+      set({ attachments: graphId ? await db.listAttachments(graphId) : [] });
+    },
+
+    async addAttachments(nodeId, files) {
+      const graph = get().graph;
+      if (!graph) return { ok: 0, failed: [] };
+
+      const failed: { name: string; error: string }[] = [];
+      const added: Attachment[] = [];
+
+      for (const file of files) {
+        const kind = detectAttachmentKind(file);
+        if (!kind) {
+          failed.push({ name: file.name, error: '不支持这个类型' });
+          continue;
+        }
+        if (kind === 'image' && file.size > MAX_IMAGE_BYTES) {
+          failed.push({
+            name: file.name,
+            error: `图片 ${formatBytes(file.size)}，超过 ${formatBytes(MAX_IMAGE_BYTES)} 上限`,
+          });
+          continue;
+        }
+        try {
+          let text: string | undefined;
+          let warning: string | undefined;
+          if (kind === 'text') {
+            // 复用知识库那套解析器：txt/md/docx/epub 已经支持
+            const parsed = await parseFile(file);
+            if (!parsed.text.trim()) throw new Error('没有解析出可用的文字');
+            text = parsed.text;
+            warning = parsed.warnings.length ? parsed.warnings.join('；') : undefined;
+          }
+          const attachment: Attachment = {
+            id: uid(),
+            graphId: graph.id,
+            nodeId,
+            name: file.name,
+            mime: file.type,
+            size: file.size,
+            kind,
+            // File 本身就是 Blob，直接存，不转 base64
+            blob: file,
+            text,
+            warning,
+            createdAt: now(),
+          };
+          await db.saveAttachment(attachment);
+          added.push(attachment);
+        } catch (err) {
+          failed.push({ name: file.name, error: (err as Error)?.message ?? String(err) });
+        }
+      }
+
+      if (added.length) {
+        commit(
+          (nodes) => {
+            const current = nodes[nodeId];
+            if (!current) return;
+            nodes[nodeId] = {
+              ...current,
+              attachmentIds: [...(current.attachmentIds ?? []), ...added.map((a) => a.id)],
+              updatedAt: now(),
+            };
+          },
+          { label: '添加附件' },
+        );
+        set({ attachments: [...get().attachments, ...added] });
+      }
+      return { ok: added.length, failed };
+    },
+
+    async removeAttachment(attachmentId) {
+      const att = get().attachments.find((a) => a.id === attachmentId);
+      await db.deleteAttachment(attachmentId);
+      dataUrlCache.delete(attachmentId);
+
+      if (att) {
+        /*
+         * 这一步刻意不进撤销历史：二进制已经删了，撤销只能把 id 放回节点上，
+         * 指向一个不存在的文件。与其给一个撤了也回不来的承诺，不如不给。
+         */
+        commit(
+          (nodes) => {
+            const current = nodes[att.nodeId];
+            if (!current) return;
+            nodes[att.nodeId] = {
+              ...current,
+              attachmentIds: (current.attachmentIds ?? []).filter((id) => id !== attachmentId),
+              updatedAt: now(),
+            };
+          },
+          { history: false },
+        );
+      }
+      set({ attachments: get().attachments.filter((a) => a.id !== attachmentId) });
     },
 
     async send(userNodeId) {

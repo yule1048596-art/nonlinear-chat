@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { useStore } from '../store/useStore';
 import { toast } from '../lib/toast';
-import { EXCLUDE_LABEL, explainContext } from '../lib/context';
+import { collectAncestors, EXCLUDE_LABEL, explainContext } from '../lib/context';
 import { estimateMessageTokens, estimateTokens, formatTokens } from '../lib/tokens';
 import { pathToMarkdown } from '../lib/markdown';
 import type { RetrievedChunk } from '../lib/knowledge';
+import { contentToText, type ResolvedAttachment } from '../lib/attachments';
 import type { NodeRole } from '../types';
 
 const ROLE_LABEL: Record<NodeRole, string> = {
@@ -37,6 +38,9 @@ export function ContextPreview({ open, onClose }: { open: boolean; onClose: () =
   const [hits, setHits] = useState<RetrievedChunk[] | null>(null);
   const [retrieving, setRetrieving] = useState(false);
   const [retrieveError, setRetrieveError] = useState<string | null>(null);
+  const [files, setFiles] = useState<Map<string, ResolvedAttachment[]> | undefined>(undefined);
+  const resolveAttachments = useStore((s) => s.resolveAttachments);
+  const attachmentCount = useStore((s) => s.attachments.length);
 
   const base = useMemo(
     () => ({ systemPrompt: settings.systemPrompt, limit: settings.contextLimit }),
@@ -48,7 +52,7 @@ export function ContextPreview({ open, onClose }: { open: boolean; onClose: () =
     if (!nodes || !selectedId || !nodes[selectedId]) return '';
     const entries = explainContext(nodes, selectedId, base).entries;
     for (let i = entries.length - 1; i >= 0; i--) {
-      if (entries[i]!.message.role === 'user') return entries[i]!.message.content;
+      if (entries[i]!.message.role === 'user') return contentToText(entries[i]!.message.content);
     }
     return '';
   }, [nodes, selectedId, base]);
@@ -75,10 +79,34 @@ export function ContextPreview({ open, onClose }: { open: boolean; onClose: () =
     };
   }, [open, hasKnowledge, query, retrieveKnowledge]);
 
+  /*
+   * 附件要读 Blob 转 data URI，是异步的。预览面板的职责就是「如实显示会发出去
+   * 什么」，少显示一张图比不显示更糟，所以这里也得解析一遍。
+   */
+  useEffect(() => {
+    if (!open || !nodes || !selectedId || !nodes[selectedId] || attachmentCount === 0) {
+      setFiles(undefined);
+      return;
+    }
+    let cancelled = false;
+    void resolveAttachments(collectAncestors(nodes, selectedId)).then(
+      (result) => !cancelled && setFiles(result),
+    );
+    return () => {
+      cancelled = true;
+    };
+    // nodes 每次流式输出都变，但附件只跟着选中节点和附件总数走
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedId, attachmentCount, resolveAttachments]);
+
   const explained = useMemo(() => {
     if (!nodes || !selectedId || !nodes[selectedId]) return null;
-    return explainContext(nodes, selectedId, { ...base, knowledge: hits ?? undefined });
-  }, [nodes, selectedId, base, hits]);
+    return explainContext(nodes, selectedId, {
+      ...base,
+      knowledge: hits ?? undefined,
+      attachments: files,
+    });
+  }, [nodes, selectedId, base, hits, files]);
 
   if (!open || !explained || !nodes) return null;
 
@@ -149,6 +177,12 @@ export function ContextPreview({ open, onClose }: { open: boolean; onClose: () =
             {entries.map((entry, i) => {
               const isOpen = expanded === i;
               const { role, content } = entry.message;
+              // 内容可能是「文字 + 图片」的分段数组，文字和图片分开渲染
+              const text = contentToText(content);
+              const images =
+                typeof content === 'string'
+                  ? []
+                  : content.filter((p) => p.type === 'image_url').map((p) => p.image_url.url);
               return (
                 <li key={i} className={isOpen ? 'open' : ''}>
                   <div className="preview-msg-head" onClick={() => setExpanded(isOpen ? null : i)}>
@@ -156,7 +190,7 @@ export function ContextPreview({ open, onClose }: { open: boolean; onClose: () =
                     <span className={`preview-role role-${entry.knowledge ? 'knowledge' : role}`}>
                       {entry.knowledge ? '知识库' : MESSAGE_ROLE_LABEL[role]}
                     </span>
-                    <span className="preview-tokens">≈{formatTokens(estimateTokens(content))}</span>
+                    <span className="preview-tokens">≈{formatTokens(estimateTokens(text))}</span>
                     <span className="preview-sources">
                       {entry.knowledge?.map((k) => (
                         <span
@@ -187,9 +221,18 @@ export function ContextPreview({ open, onClose }: { open: boolean; onClose: () =
                       )}
                     </span>
                   </div>
-                  <pre className={isOpen ? 'preview-content' : 'preview-content clipped'}>
-                    {content}
-                  </pre>
+                  {images.length > 0 && (
+                    <div className="preview-images">
+                      {images.map((url, n) => (
+                        <img key={n} src={url} alt={`附件图片 ${n + 1}`} />
+                      ))}
+                    </div>
+                  )}
+                  {text && (
+                    <pre className={isOpen ? 'preview-content' : 'preview-content clipped'}>
+                      {text}
+                    </pre>
+                  )}
                 </li>
               );
             })}

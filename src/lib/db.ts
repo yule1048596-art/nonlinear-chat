@@ -1,15 +1,16 @@
 import { openDB, type IDBPDatabase } from 'idb';
-import type { Graph, GraphMeta, KnowledgeChunk, KnowledgeFile, Settings } from '../types';
+import type { Attachment, Graph, GraphMeta, KnowledgeChunk, KnowledgeFile, Settings } from '../types';
 import { toMeta, type Snapshot, type SnapshotMeta } from './snapshots';
 
 const DB_NAME = 'nonlinear-chat';
-/** v2 加了 snapshots 表，v3 加了知识库两张表。升级只新建表，不动既有数据 */
-const DB_VERSION = 3;
+/** v2 加 snapshots，v3 加知识库两张表，v4 加附件表。升级只新建表，不动既有数据 */
+const DB_VERSION = 4;
 const GRAPHS = 'graphs';
 const KV = 'kv';
 const SNAPSHOTS = 'snapshots';
 const KNOWLEDGE_FILES = 'knowledgeFiles';
 const KNOWLEDGE_CHUNKS = 'knowledgeChunks';
+const ATTACHMENTS = 'attachments';
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -38,6 +39,11 @@ function db() {
         store.createIndex('graphId', 'graphId');
         store.createIndex('fileId', 'fileId');
       }
+      if (!database.objectStoreNames.contains(ATTACHMENTS)) {
+        const store = database.createObjectStore(ATTACHMENTS, { keyPath: 'id' });
+        store.createIndex('graphId', 'graphId');
+        store.createIndex('nodeId', 'nodeId');
+      }
     },
   });
   return dbPromise;
@@ -53,8 +59,9 @@ export async function saveGraph(graph: Graph): Promise<void> {
 
 export async function deleteGraph(id: string): Promise<void> {
   await (await db()).delete(GRAPHS, id);
-  // 知识库挂在画布上，画布没了它就是无主数据，不清会一直占着空间
+  // 知识库和附件都挂在画布上，画布没了它们就是无主数据，不清会一直占着空间
   await deleteKnowledgeForGraph(id);
+  await deleteAttachmentsForGraph(id);
 }
 
 export async function listGraphs(): Promise<GraphMeta[]> {
@@ -156,6 +163,37 @@ export async function deleteKnowledgeForGraph(graphId: string): Promise<void> {
   const chunks = tx.objectStore(KNOWLEDGE_CHUNKS);
   for (const key of await files.index('graphId').getAllKeys(graphId)) void files.delete(key);
   for (const key of await chunks.index('graphId').getAllKeys(graphId)) void chunks.delete(key);
+  await tx.done;
+}
+
+/* ---------- 附件 ---------- */
+
+export async function saveAttachment(attachment: Attachment): Promise<void> {
+  await (await db()).put(ATTACHMENTS, attachment);
+}
+
+/** 读出一个画布的全部附件。只在打开画布时读一次，之后靠 store 里的缓存 */
+export async function listAttachments(graphId: string): Promise<Attachment[]> {
+  const all: Attachment[] = await (await db()).getAllFromIndex(ATTACHMENTS, 'graphId', graphId);
+  return all.sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export async function deleteAttachment(id: string): Promise<void> {
+  await (await db()).delete(ATTACHMENTS, id);
+}
+
+/** 删节点时连带删它的附件 */
+export async function deleteAttachmentsForNode(nodeId: string): Promise<void> {
+  const database = await db();
+  const tx = database.transaction(ATTACHMENTS, 'readwrite');
+  for (const key of await tx.store.index('nodeId').getAllKeys(nodeId)) void tx.store.delete(key);
+  await tx.done;
+}
+
+export async function deleteAttachmentsForGraph(graphId: string): Promise<void> {
+  const database = await db();
+  const tx = database.transaction(ATTACHMENTS, 'readwrite');
+  for (const key of await tx.store.index('graphId').getAllKeys(graphId)) void tx.store.delete(key);
   await tx.done;
 }
 

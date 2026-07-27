@@ -31,6 +31,8 @@ export interface ChatNode {
   contextMode?: ContextMode;
   /** @deprecated 已被 contextMode 取代，加载时会迁移。仅为兼容旧数据保留 */
   includeInContext?: boolean;
+  /** 挂在这个节点上的附件 id。内容存在单独的表里，见 Attachment 的说明 */
+  attachmentIds?: string[];
   /** 生成这条消息用的配置档，便于在不同分支上对比模型 */
   profileId?: string;
   model?: string;
@@ -120,7 +122,46 @@ export interface KnowledgeChunk {
   embedding: Float32Array;
 }
 
+/**
+ * 消息里的一段内容。
+ *
+ * 只有带附件时才用得上数组形式 —— 没有附件的消息仍然发纯字符串，
+ * 这样不支持多模态的服务端（以及本机 llama.cpp 的多数模型）行为完全不变。
+ */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ContentPart[];
 }
+
+/**
+ * 挂在节点上的附件。
+ *
+ * 单独一张表存，节点只记 id。原因是这个应用每次改动都整份写画布、
+ * 快照又要存全部画布的完整副本最多十份 —— 把几 MB 的图片放进节点里，
+ * 打一个字就在排队写几兆，快照还会把它复制十遍。
+ *
+ * 二进制以原生 Blob 存 IndexedDB，不转 base64（省 33% 体积），
+ * 只在发请求那一刻转成 data URI。
+ */
+export interface Attachment {
+  id: string;
+  graphId: string;
+  nodeId: string;
+  name: string;
+  mime: string;
+  /** 原始字节数 */
+  size: number;
+  kind: AttachmentKind;
+  blob: Blob;
+  /** 文本类文件解析出的正文，发送时展开成一段标注过的引文 */
+  text?: string;
+  /** 解析时的提醒，比如 epub 有几章没读出来 */
+  warning?: string;
+  createdAt: number;
+}
+
+export type AttachmentKind = 'image' | 'text';
