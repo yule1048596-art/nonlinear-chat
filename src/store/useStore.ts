@@ -21,6 +21,7 @@ import {
 import { DEFAULT_EMBEDDING, EmbeddingError, embedOne, type EmbeddingConfig } from '../lib/embeddings';
 import { indexFile } from '../lib/indexer';
 import { retrieve, type RetrievedChunk } from '../lib/knowledge';
+import { loadViewMode, saveViewMode, type ViewMode } from '../lib/view';
 import { emptyHistory, record, redo as redoStep, undo as undoStep, type StepResult } from '../lib/history';
 import { LlmError, streamChat } from '../lib/llm';
 import { placeChild, placeSibling } from '../lib/layout';
@@ -166,6 +167,10 @@ interface State {
   removeGraph: (id: string) => Promise<void>;
   renameGraph: (title: string) => void;
   importGraph: (graph: Graph) => Promise<void>;
+
+  /** 画布视图模式。纯视图偏好，存 localStorage，不进画布数据 */
+  viewMode: ViewMode;
+  setViewMode: (mode: ViewMode) => void;
 
   select: (id: string | null) => void;
   /** 正在对比的节点。放 store 而非 node.data，否则会破坏 Canvas 的节点对象缓存 */
@@ -590,6 +595,14 @@ export const useStore = create<State>((set, get) => {
       resetHistory();
       set({ graph, selectedId: null, graphs: await db.listGraphs() });
       await afterGraphSwitch();
+    },
+
+    viewMode: loadViewMode(),
+
+    setViewMode(mode) {
+      if (get().viewMode === mode) return;
+      saveViewMode(mode);
+      set({ viewMode: mode });
     },
 
     select(id) {

@@ -2279,3 +2279,133 @@ body.is-connecting .handle {
   font-size: 10.5px;
   line-height: 1.55;
 }
+
+/* ============================================================
+   地图视图：节点压成一行
+   ============================================================ */
+
+/*
+ * 和编辑视图共用坐标，所以宽度也保持 380px —— 列对齐不变，只是每个节点
+ * 从几百像素高压到 36px。缩小之后能认出谁是谁，靠的是左边那条角色色条：
+ * 字号再小它也还在。
+ */
+.map-node {
+  width: 380px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-3);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-1);
+  cursor: default;
+  overflow: hidden;
+  transition: opacity 0.2s var(--ease), filter 0.2s var(--ease), box-shadow 0.2s var(--ease),
+    border-color 0.2s var(--ease);
+}
+
+.map-node .role-dot {
+  margin-left: 9px;
+}
+
+.map-node.node-user {
+  border-left-color: var(--user);
+}
+.map-node.node-assistant {
+  border-left-color: var(--assistant);
+}
+.map-node.node-system {
+  border-left-color: var(--system);
+}
+.map-node.node-note {
+  border-left-color: var(--note);
+}
+
+.map-node:hover {
+  box-shadow: var(--shadow-2);
+}
+
+.map-node.is-dimmed {
+  opacity: 0.38;
+  filter: saturate(0.2);
+}
+
+.map-node.is-dimmed:hover {
+  opacity: 0.75;
+  filter: saturate(0.6);
+}
+
+.map-node.in-context {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-2);
+}
+
+.map-node.is-selected {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-2), 0 0 0 3px var(--accent-soft);
+}
+
+.map-node.is-muted .map-summary {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-3);
+  opacity: 0.7;
+}
+
+.map-node.is-error {
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+}
+
+.map-role {
+  font-size: 11px;
+  color: var(--text-3);
+  flex: 0 0 auto;
+  min-width: 22px;
+}
+
+.map-summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-summary.is-empty {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.map-tokens {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.map-flag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.map-flag.on {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.map-flag.off {
+  color: var(--text-3);
+  background: var(--surface-3);
+}
+
+.map-flag.error {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}

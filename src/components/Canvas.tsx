@@ -19,8 +19,9 @@ import { collectAncestors, collectDescendants, computeHidden } from '../lib/cont
 import { toast } from '../lib/toast';
 import { ContextMenu, type MenuAnchor, type MenuItem } from './ContextMenu';
 import { MessageNode } from './MessageNode';
+import { MapNode } from './MapNode';
 
-const nodeTypes: NodeTypes = { message: MessageNode };
+const nodeTypes: NodeTypes = { message: MessageNode, map: MapNode };
 
 const EDGE_MARKER = { type: MarkerType.ArrowClosed, width: 14, height: 14 } as const;
 
@@ -32,8 +33,9 @@ export function Canvas() {
   const linkNodes = useStore((s) => s.linkNodes);
   const unlinkNodes = useStore((s) => s.unlinkNodes);
   const addRootNode = useStore((s) => s.addRootNode);
+  const viewMode = useStore((s) => s.viewMode);
 
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, fitView } = useReactFlow();
   const nodeCache = useRef(new Map<string, Node>());
   const edgeCache = useRef(new Map<string, Edge>());
 
@@ -48,6 +50,47 @@ export function Canvas() {
 
   // 拉线过程中把所有节点的连接点都显出来，否则得靠猜往哪儿放
   useEffect(() => () => document.body.classList.remove('is-connecting'), []);
+
+  /*
+   * 进地图视图时自动 fit —— 那个视图本来就是用来看全局的。回编辑视图不 fit：
+   * 卡片高得多，fit 出来会缩到看不清，而且用户刚才看的地方会被一脚踹飞。
+   *
+   * 不能在切换的那一刻就 fit：那时 React Flow 还没量到新的节点高度，
+   * 拿旧尺寸（或者没尺寸）算出来的包围盒是错的，会一路怼到最大缩放。
+   * 所以只挂一个「待 fit」标记，等下一次尺寸回传到了再真正执行。
+   */
+  const firstRender = useRef(true);
+  const pendingFit = useRef(false);
+
+  useEffect(() => {
+    /*
+     * 必须主动清空实测尺寸。受控模式下节点对象自带 measured 时 React Flow
+     * 认为尺寸已知，不会重新量 —— 那样切到地图视图后它仍以为节点有两百多像素高，
+     * 小地图和 fitView 全都按旧尺寸算。
+     */
+    dimsRef.current.clear();
+    setDimsVersion((v) => v + 1);
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    if (viewMode === 'map') pendingFit.current = true;
+  }, [viewMode]);
+
+  useEffect(() => {
+    // size 为 0 说明这次是上面那个 clear 触发的，真正的尺寸还没量出来，再等一轮
+    if (!pendingFit.current || dimsRef.current.size === 0) return;
+    /*
+     * React Flow 是一个节点一次回传尺寸的（实测 12 个节点会触发 12 次 onNodesChange），
+     * 在第一次回传时就 fit，算出来的包围盒里只有一个节点，视口会被怼到最大缩放。
+     * 所以这里等尺寸彻底不再变化了再 fit —— 每来一条就重置计时器。
+     */
+    const timer = setTimeout(() => {
+      pendingFit.current = false;
+      void fitView({ duration: 360, padding: 0.12 });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [dimsVersion, fitView]);
 
   /**
    * 哪些节点有下游。放这里算一次是必要的：原来每个 MessageNode 各自
@@ -97,6 +140,7 @@ export function Canvas() {
     const out: Node[] = [];
 
     const hasSelection = !!selectedId && !!nodes[selectedId];
+    const type = viewMode === 'map' ? 'map' : 'message';
 
     for (const node of Object.values(nodes)) {
       alive.add(node.id);
@@ -112,6 +156,7 @@ export function Canvas() {
       const prev = cache.get(node.id);
       if (
         prev &&
+        prev.type === type &&
         prev.position.x === node.position.x &&
         prev.position.y === node.position.y &&
         prev.selected === isSelected &&
@@ -127,7 +172,7 @@ export function Canvas() {
       }
       const next: Node = {
         id: node.id,
-        type: 'message',
+        type,
         position: node.position,
         selected: isSelected,
         measured,
@@ -139,7 +184,7 @@ export function Canvas() {
     }
     for (const key of [...cache.keys()]) if (!alive.has(key)) cache.delete(key);
     return out;
-  }, [nodes, selectedId, contextSet, dimsVersion, hidden, hiddenCounts, parentIds]);
+  }, [nodes, selectedId, contextSet, dimsVersion, hidden, hiddenCounts, parentIds, viewMode]);
 
   const rfEdges = useMemo<Edge[]>(() => {
     if (!nodes) return [];

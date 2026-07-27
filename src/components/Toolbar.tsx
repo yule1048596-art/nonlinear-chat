@@ -32,6 +32,8 @@ export function Toolbar({
   const applyLayout = useStore((s) => s.applyLayout);
   const importSettings = useStore((s) => s.importSettings);
   const restoreBackup = useStore((s) => s.restoreBackup);
+  const viewMode = useStore((s) => s.viewMode);
+  const setViewMode = useStore((s) => s.setViewMode);
   const { getNodes, fitView } = useReactFlow();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -95,7 +97,12 @@ export function Toolbar({
         dimensions.set(n.id, { width: n.measured.width, height: n.measured.height });
       }
     }
-    if (applyLayout(dimensions)) {
+    /*
+     * 地图视图里量到的是 36px 高的 chip，照它排版一回编辑视图卡片就全压在一起了。
+     * 两个视图共用坐标，所以布局必须按更占地方的那个来 —— 这里丢掉实测值，
+     * 让 computeLayout 走 380×160 的兜底尺寸。
+     */
+    if (applyLayout(viewMode === 'map' ? undefined : dimensions)) {
       void fitView({ duration: 400, padding: 0.15 });
       toast('已整理 · ⌘Z 撤销');
     } else {
@@ -127,6 +134,17 @@ export function Toolbar({
         </button>
         <button className="btn" onClick={onOpenSnapshots} title="本地快照与回滚">
           快照
+        </button>
+        <button
+          className={viewMode === 'map' ? 'btn on' : 'btn'}
+          onClick={() => setViewMode(viewMode === 'map' ? 'edit' : 'map')}
+          title={
+            viewMode === 'map'
+              ? '回到编辑视图：完整卡片，能读能改'
+              : '地图视图：每个节点压成一行，看结构不看内容'
+          }
+        >
+          {viewMode === 'map' ? '地图中' : '地图'}
         </button>
         <button
           className={knowledgeCount ? 'btn on' : 'btn'}
