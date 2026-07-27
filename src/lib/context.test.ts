@@ -599,3 +599,33 @@ describe('附件与「空节点」的判定', () => {
     expect(buildContext(g, 'a1')).toEqual([]);
   });
 });
+
+describe('悬空的附件引用', () => {
+  /**
+   * 从别处导入的画布、或者附件被清理掉之后，节点会挂着一串找不到对应记录的 id。
+   * excludeReason 只看得到 id 列表，会判定它「不是空节点」——
+   * 但拼出来其实什么都没有，发出去就是一条 content 为空的消息。
+   */
+  it('挂着 id 但取不到附件时，节点按空处理', () => {
+    const q = node('u1', 'user', '');
+    q.attachmentIds = ['没了'];
+    const g = graph(q, node('a1', 'assistant', '', ['u1']));
+    // 没有传 attachments，模拟取不到记录
+    expect(buildContext(g, 'a1')).toEqual([]);
+  });
+
+  it('理由如实报成「内容为空」', () => {
+    const q = node('u1', 'user', '   ');
+    q.attachmentIds = ['没了'];
+    const g = graph(q, node('a1', 'assistant', '', ['u1']));
+    const { excluded } = explainContext(g, 'a1');
+    expect(excluded.find((e) => e.node.id === 'u1')?.reason).toBe('empty');
+  });
+
+  it('正文还在的话不受影响', () => {
+    const q = node('u1', 'user', '正文还在');
+    q.attachmentIds = ['没了'];
+    const g = graph(q, node('a1', 'assistant', '', ['u1']));
+    expect(texts(buildContext(g, 'a1'))).toEqual(['user:正文还在']);
+  });
+});

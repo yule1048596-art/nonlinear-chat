@@ -650,6 +650,13 @@ export const useStore = create<State>((set, get) => {
           id: newId,
           parentIds: node.parentIds.map((p) => idMap.get(p)).filter((p): p is string => !!p),
           status: node.status === 'streaming' ? 'idle' : node.status,
+          /*
+           * 附件引用必须清掉。附件的二进制从来不在导出文件里，而且这里连
+           * 节点 id 都重新映射过 —— 留着就是一串指向不存在文件的悬空 id。
+           * 更要命的是「有附件就不算空节点」那条判断会认下它，
+           * 于是一个空正文的节点会被当成有内容，发出一条 content 为空的消息。
+           */
+          attachmentIds: undefined,
         };
       }
       const graph: Graph = {

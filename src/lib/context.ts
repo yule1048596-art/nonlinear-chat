@@ -257,14 +257,26 @@ export function explainContext(
     } else {
       // 批注走到这里说明被显式设成了 include，当成 user 发言
       const isAssistant = node.role === 'assistant';
+      // 只有用户侧的消息能带附件 —— 模型的回答里不存在「附件」这回事
+      const content = isAssistant
+        ? node.content
+        : buildUserContent(node.content, options.attachments?.get(node.id));
+
+      /*
+       * 兜底：正文空、附件也没解析出来。
+       *
+       * 会走到这里是因为节点挂着 attachmentIds、却找不到对应的附件记录 ——
+       * 比如从别处导入的画布，或者附件被清理掉了。上面的 excludeReason 只看得到
+       * id 列表，判定它「不是空节点」，但拼出来其实什么都没有。
+       * 空 content 的 user 消息有几家服务商会直接 400，不如就当它不存在。
+       */
+      if (typeof content === 'string' && !content.trim()) {
+        excluded.push({ node, reason: 'empty' });
+        continue;
+      }
+
       body.push({
-        message: {
-          role: isAssistant ? 'assistant' : 'user',
-          // 只有用户侧的消息能带附件 —— 模型的回答里不存在「附件」这回事
-          content: isAssistant
-            ? node.content
-            : buildUserContent(node.content, options.attachments?.get(node.id)),
-        },
+        message: { role: isAssistant ? 'assistant' : 'user', content },
         sourceIds: [node.id],
       });
     }

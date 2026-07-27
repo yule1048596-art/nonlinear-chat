@@ -102,48 +102,15 @@ export function Canvas() {
     return () => clearTimeout(timer);
   }, [dimsVersion, fitView]);
 
-  /**
-   * 哪些节点有下游。放这里算一次是必要的：原来每个 MessageNode 各自
-   * 遍历全表判断，N 个节点就是 O(N²)，而流式输出每 33ms 就触发一轮。
-   */
-  const parentIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const node of Object.values(nodes ?? {})) {
-      for (const p of node.parentIds) set.add(p);
-    }
-    return set;
-  }, [nodes]);
-
-  /** 被折叠子树藏起来的节点 */
-  const hidden = useMemo(() => (nodes ? computeHidden(nodes) : new Set<string>()), [nodes]);
-
-  /** 每个折叠节点藏了多少东西，显示在徽章上，否则用户不知道下面还有内容 */
-  const hiddenCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    if (!nodes || hidden.size === 0) return counts;
-    for (const node of Object.values(nodes)) {
-      if (!node.subtreeCollapsed) continue;
-      let n = 0;
-      for (const id of collectDescendants(nodes, node.id)) {
-        if (id !== node.id && hidden.has(id)) n++;
-      }
-      counts.set(node.id, n);
-    }
-    return counts;
-  }, [nodes, hidden]);
-
-  /** 选中节点的全部祖先 —— 也就是「这一次发送真正会带上的上下文」 */
-  const contextSet = useMemo(() => {
-    if (!nodes || !selectedId || !nodes[selectedId]) return new Set<string>();
-    return collectAncestors(nodes, selectedId);
-  }, [nodes, selectedId]);
-
   /*
-   * 地图视图专用的一套坐标。
+   * 图的「形状」签名：id + 角色 + 父节点 + 是否折叠子树。
    *
-   * 只在「图的形状」变了的时候才重排：正文每敲一个字 nodes 就是一个新对象，
-   * 跟着跑一遍 dagre 纯属浪费，而且排版结果根本不会变。所以这里用
-   * 「id + 父节点」拼一个结构签名当依赖，正文交给节点自己去渲染。
+   * 下面这一整组派生量只跟形状有关，跟正文一个字都没关系。可正文每敲一个字、
+   * 流式输出每 33ms，nodes 就是一个全新的对象 —— 直接用 nodes 当依赖的话，
+   * 拓扑排序、dagre 排版、问答配对全都会跟着重算一遍，结果还完全一样。
+   *
+   * 所以先拼一个签名（O(N) 的字符串拼接，比后面那些便宜得多），
+   * 其余的都挂在签名上；nodes 本身通过 ref 拿，故意不进依赖。
    */
   const nodesRef = useRef<NodeMap | undefined>(undefined);
   nodesRef.current = nodes;
@@ -151,10 +118,77 @@ export function Canvas() {
   const structureKey = useMemo(() => {
     if (!nodes) return '';
     return Object.values(nodes)
-      .map((n) => `${n.id}>${n.parentIds.join(',')}`)
+      .map((n) => `${n.id}:${n.role}>${n.parentIds.join(',')}${n.subtreeCollapsed ? '#' : ''}`)
       .sort()
       .join('|');
   }, [nodes]);
+
+  /** 哪些节点有下游 */
+  const parentIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const node of Object.values(nodesRef.current ?? {})) {
+      for (const p of node.parentIds) set.add(p);
+    }
+    return set;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structureKey]);
+
+  /**
+   * 每个 assistant 节点有几个「同一个问题的另一版回答」。
+   *
+   * 原来是每个 MessageNode 自己调 findSiblings 遍历全表 —— N 个节点就是
+   * O(N²)，实测 400 节点时流式输出每秒要为此烧掉 170ms，而这个数只在
+   * 结构变化时才会变。这里一次分好组，再按 id 发下去。
+   */
+  const siblingCounts = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    for (const node of Object.values(nodesRef.current ?? {})) {
+      if (node.role !== 'assistant') continue;
+      const key = [...node.parentIds].sort().join('|');
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(node.id);
+      else groups.set(key, [node.id]);
+    }
+    const counts = new Map<string, number>();
+    for (const ids of groups.values()) {
+      for (const id of ids) counts.set(id, ids.length);
+    }
+    return counts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structureKey]);
+
+  /** 被折叠子树藏起来的节点 */
+  const hidden = useMemo(() => {
+    const all = nodesRef.current;
+    return all ? computeHidden(all) : new Set<string>();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structureKey]);
+
+  /** 每个折叠节点藏了多少东西，显示在徽章上，否则用户不知道下面还有内容 */
+  const hiddenCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    const all = nodesRef.current;
+    if (!all || hidden.size === 0) return counts;
+    for (const node of Object.values(all)) {
+      if (!node.subtreeCollapsed) continue;
+      let n = 0;
+      for (const id of collectDescendants(all, node.id)) {
+        if (id !== node.id && hidden.has(id)) n++;
+      }
+      counts.set(node.id, n);
+    }
+    return counts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structureKey, hidden]);
+
+  /** 选中节点的全部祖先 —— 也就是「这一次发送真正会带上的上下文」 */
+  const contextSet = useMemo(() => {
+    const all = nodesRef.current;
+    if (!all || !selectedId || !all[selectedId]) return new Set<string>();
+    return collectAncestors(all, selectedId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structureKey, selectedId]);
+
 
   /** 能合成一张卡的「一问一答」。底层数据不动，纯渲染层的事 */
   const pairing = useMemo(() => {
@@ -236,6 +270,7 @@ export function Canvas() {
       const isHidden = hidden.has(node.id);
       const hiddenCount = hiddenCounts.get(node.id) ?? 0;
       const hasChildren = parentIds.has(node.id);
+      const siblingCount = siblingCounts.get(node.id) ?? 0;
       const prev = cache.get(node.id);
       if (
         prev &&
@@ -249,6 +284,7 @@ export function Canvas() {
         (prev.data as { dimmed: boolean }).dimmed === dimmed &&
         (prev.data as { hiddenCount: number }).hiddenCount === hiddenCount &&
         (prev.data as { hasChildren: boolean }).hasChildren === hasChildren &&
+        (prev.data as { siblingCount: number }).siblingCount === siblingCount &&
         (prev.data as { answerId?: string }).answerId === answerId
       ) {
         out.push(prev);
@@ -266,7 +302,7 @@ export function Canvas() {
         // 地图视图是只读的：合并之后连线的两端和数据里的父子关系已经对不上了，
         // 让它可连可删只会连错、删错
         connectable: !isMap,
-        data: { inContext, dimmed, hiddenCount, hasChildren, answerId },
+        data: { inContext, dimmed, hiddenCount, hasChildren, siblingCount, answerId },
       };
       cache.set(node.id, next);
       out.push(next);
@@ -281,12 +317,15 @@ export function Canvas() {
     hidden,
     hiddenCounts,
     parentIds,
+    siblingCounts,
     viewMode,
     mapPositions,
     pairing,
   ]);
 
   const rfEdges = useMemo<Edge[]>(() => {
+    // 边只跟结构有关，跟正文无关 —— 挂 nodes 的话每敲一个字都要重建一遍
+    const nodes = nodesRef.current;
     if (!nodes) return [];
     const cache = edgeCache.current;
     const alive = new Set<string>();
@@ -348,7 +387,8 @@ export function Canvas() {
     }
     for (const key of [...cache.keys()]) if (!alive.has(key)) cache.delete(key);
     return out;
-  }, [nodes, contextSet, hidden, viewMode, pairing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structureKey, contextSet, hidden, viewMode, pairing]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {

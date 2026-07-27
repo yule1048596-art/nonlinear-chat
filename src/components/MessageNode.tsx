@@ -3,7 +3,6 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useStore } from '../store/useStore';
 import { toast } from '../lib/toast';
 import { inContextByDefault, isInContext } from '../lib/context';
-import { findSiblings } from '../lib/markdown';
 import type { NodeRole } from '../types';
 import { ContextMenu, type MenuAnchor } from './ContextMenu';
 import { Markdown } from './Markdown';
@@ -90,10 +89,6 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const streaming = node?.status === 'streaming';
-  // 只有存在「同一个问题的另一版回答」时，对比才有意义
-  const siblingCount = useStore((s) =>
-    s.graph ? findSiblings(s.graph.nodes, id).length : 0,
-  );
 
   // 流式输出时把视野钉在底部，除非用户自己往上滚了
   useEffect(() => {
@@ -118,12 +113,16 @@ export const MessageNode = memo(function MessageNode({ id, data, selected }: Nod
     dimmed,
     hiddenCount = 0,
     hasChildren = false,
+    siblingCount = 0,
   } = (data ?? {}) as {
     inContext?: boolean;
     dimmed?: boolean;
     hiddenCount?: number;
-    // 由 Canvas 统一算好下发：每个节点自己遍历全表判断是 O(N²)
+    // 下面两个都由 Canvas 统一算好下发：每个节点自己遍历全表判断是 O(N²)，
+    // 而流式输出每 33ms 就触发一轮
     hasChildren?: boolean;
+    /** 同一个问题的回答一共有几版 */
+    siblingCount?: number;
   };
   const isText = node.role !== 'assistant';
   const collapsed = node.collapsed;
