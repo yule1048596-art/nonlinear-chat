@@ -208,16 +208,55 @@ describe('buildMiniGraph', () => {
     expect(buildMiniGraph(g, 'a1').nodes.map((n) => n.id).sort()).toEqual(['lone', 'q1']);
   });
 
-  it('坐标沿用编辑视图的相对位置', () => {
+  /** 横向沿用画布：哪条分支在左、哪条在右，是用户自己摆的，得留着 */
+  it('横向沿用编辑视图的左右关系', () => {
     const g = graph(
-      at(node('a', 'user'), 0, 0),
-      at(node('b', 'user'), 400, 0),
-      at(node('c', 'user'), 0, 300),
+      at(node('root', 'user'), 0, 0),
+      at(node('left', 'note', ['root']), -400, 300),
+      at(node('right', 'note', ['root']), 400, 300),
     );
-    const byId = Object.fromEntries(buildMiniGraph(g, 'a').nodes.map((n) => [n.id, n]));
-    expect(byId.b!.x).toBeGreaterThan(byId.a!.x);
-    expect(byId.c!.y).toBeGreaterThan(byId.a!.y);
-    expect(byId.b!.y).toBe(byId.a!.y);
+    const byId = Object.fromEntries(buildMiniGraph(g, 'root').nodes.map((n) => [n.id, n]));
+    expect(byId.left!.x).toBeLessThan(byId.right!.x);
+  });
+
+  /** 纵向按层级均分：照搬画布的 y 会把画布本身的疏密也搬过来，看着就乱 */
+  it('纵向按层级排，同层等高、逐层等距', () => {
+    const g = graph(
+      at(node('root', 'user'), 0, 0),
+      at(node('l', 'note', ['root']), -400, 900), // 画布上被拖得很远
+      at(node('r', 'note', ['root']), 400, 200), // 画布上离得很近
+      at(node('deep', 'note', ['l']), -400, 1800),
+    );
+    const byId = Object.fromEntries(buildMiniGraph(g, 'root').nodes.map((n) => [n.id, n]));
+    // 同一层的两个节点高度相同，不受画布上相差 700px 的影响
+    expect(byId.l!.y).toBe(byId.r!.y);
+    // 逐层等距
+    expect(byId.l!.y - byId.root!.y).toBe(byId.deep!.y - byId.l!.y);
+    expect(byId.deep!.y).toBeGreaterThan(byId.l!.y);
+  });
+
+  /** 问答合并后相邻两张卡的层级差 2，直接拿层级当行号会空出一行 */
+  it('合并之后行号仍然连续，不留空行', () => {
+    const g = graph(
+      at(node('q1', 'user'), 0, 0),
+      at(node('a1', 'assistant', ['q1']), 0, 200),
+      at(node('q2', 'user', ['a1']), 0, 400),
+      at(node('a2', 'assistant', ['q2']), 0, 600),
+    );
+    const ys = buildMiniGraph(g, 'a2').nodes.map((n) => n.y).sort((x, y) => x - y);
+    expect(ys).toHaveLength(2);
+    expect(ys[1]! - ys[0]!).toBe(34); // 正好一行，不是两行
+  });
+
+  it('全在一条竖线上时横向不会除以零', () => {
+    const g = graph(
+      at(node('a', 'user'), 100, 0),
+      at(node('b', 'note', ['a']), 100, 300),
+    );
+    for (const n of buildMiniGraph(g, 'a').nodes) {
+      expect(Number.isFinite(n.x)).toBe(true);
+      expect(n.x).toBe(0);
+    }
   });
 
   it('标出哪些在当前上下文链上', () => {

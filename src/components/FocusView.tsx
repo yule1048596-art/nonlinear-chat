@@ -249,10 +249,11 @@ function MiniMap({ graph, onPick }: { graph: MiniGraph; onPick: (id: string) => 
   const pad = 14;
   const w = graph.width + pad * 2;
   const h = graph.height + pad * 2;
-  const BOX_W = 150;
-  const BOX_H = 460;
+  const BOX_W = 140;
+  const BOX_H = 440;
   const fit = Math.min(BOX_W / w, BOX_H / h);
-  const r = 5 / fit;
+  // 再小圆圈就糊成实心点了，空心/实心的区别是这张图的主要语义
+  const r = 5.4 / fit;
 
   return (
     <div className="focus-minimap">
@@ -263,17 +264,24 @@ function MiniMap({ graph, onPick }: { graph: MiniGraph; onPick: (id: string) => 
         role="group"
         aria-label="整张画布的结构"
       >
-        {graph.edges.map((e) => (
-          <line
-            key={e.id}
-            className={e.onPath ? 'mini-edge on-path' : 'mini-edge'}
-            x1={e.x1 + pad}
-            y1={e.y1 + pad}
-            x2={e.x2 + pad}
-            y2={e.y2 + pad}
-            strokeWidth={(e.onPath ? 2.2 : 1.4) / fit}
-          />
-        ))}
+        {graph.edges.map((e) => {
+          /*
+           * 竖直方向的贝塞尔：从父节点垂直出发、垂直落到子节点。
+           * 直线在这里会拉出一堆斜着穿过图面的长线，交角乱；曲线的两端都是
+           * 竖直的，分叉看起来是「从这儿岔出去」而不是「斜拉过去」。
+           * 和画布上的连线也是同一种语言。
+           */
+          const my = (e.y1 + e.y2) / 2 + pad;
+          return (
+            <path
+              key={e.id}
+              className={e.onPath ? 'mini-edge on-path' : 'mini-edge'}
+              d={`M ${e.x1 + pad} ${e.y1 + pad} C ${e.x1 + pad} ${my}, ${e.x2 + pad} ${my}, ${e.x2 + pad} ${e.y2 + pad}`}
+              strokeWidth={(e.onPath ? 2.4 : 1.5) / fit}
+              strokeLinecap="round"
+            />
+          );
+        })}
         {graph.nodes.map((n) => (
           <circle
             key={n.id}

@@ -1,5 +1,5 @@
 import type { ChatNode, NodeRole } from '../types';
-import { buildChildIndex, collectAncestors, topoOrder, type NodeMap } from './context';
+import { buildChildIndex, collectAncestors, depthOf, topoOrder, type NodeMap } from './context';
 import { pairTurns } from './view';
 
 /**
@@ -130,17 +130,22 @@ export interface MiniGraph {
 
 /** 编辑视图里卡片的大致中心相对于它的坐标 */
 const CARD_CX = 190;
-const CARD_CY = 60;
+
+/** 迷你图的行高。纵向按层级均分，不用画布的原始 y */
+const MINI_ROW = 34;
+/** 横向最大跨度。画布可能宽达几千像素，压到这个范围里 */
+const MINI_SPAN = 108;
 
 /**
  * 把编辑视图整张图缩小成一堆圆点。
  *
- * 前两版都在自己排版 —— 先用 dagre，后来手写一条直脊加短枝 —— 结果都是
- * 「另一张图」，跟用户在编辑视图里看到、亲手摆过的那张对不上，怎么画都别扭。
+ * 纵横两个方向用的不是同一套来源，这是有意的：
  *
- * 这一版不排版了：**直接用编辑视图的坐标**，等比缩到导航栏里。
- * 于是它就是那张画布的缩略图 —— 你在画布上怎么摆的，这儿就怎么显示，
- * 有几棵树就是几棵，一一对应，不需要再去理解第二套布局。
+ * - **纵向按图的层级均分。** 直接用画布的 y 会把画布本身的疏密照搬过来 ——
+ *   上面挤成一团、下面拉得老长，看着就乱。按层级排则每一行等距，
+ *   一眼看得出「这是第几层」。
+ * - **横向沿用画布的 x。** 左右关系是用户自己摆的：哪条分支在左、哪条在右，
+ *   他心里有数。这一层对应感必须留着，否则又变成「另一张图」了。
  *
  * 唯一的抽象是问答合并：和地图视图共用 pairTurns，一问一答缩成一个圆。
  */
@@ -156,21 +161,38 @@ export function buildMiniGraph(nodes: NodeMap, selectedId: string | null): MiniG
   const visible = all.filter((n) => !pairing.mergedInto.has(n.id));
   if (visible.length === 0) return empty;
 
-  const at = (n: ChatNode) => ({ x: n.position.x + CARD_CX, y: n.position.y + CARD_CY });
-  const points = new Map(visible.map((n) => [n.id, at(n)]));
+  /*
+   * 层级压成连续的行号。问答合并之后，相邻两张卡的层级会差 2
+   * （提问 d、回答 d+1、下一个提问 d+2），直接拿层级当行号会空出一行。
+   */
+  const memo = new Map<string, number>();
+  const rawDepth = new Map(visible.map((n) => [n.id, depthOf(nodes, n.id, memo)]));
+  const rows = [...new Set(rawDepth.values())].sort((a, b) => a - b);
+  const rowOf = new Map(rows.map((d, i) => [d, i]));
 
-  const xs = [...points.values()].map((p) => p.x);
-  const ys = [...points.values()].map((p) => p.y);
-  const minX = Math.min(...xs);
-  const minY = Math.min(...ys);
+  const xs = visible.map((n) => n.position.x + CARD_CX);
+  const minCanvasX = Math.min(...xs);
+  const spanX = Math.max(...xs) - minCanvasX;
+  // 全在一条竖线上时不要除以 0
+  const kx = spanX > 0 ? MINI_SPAN / spanX : 0;
+
+  const points = new Map(
+    visible.map((n) => [
+      n.id,
+      {
+        x: (n.position.x + CARD_CX - minCanvasX) * kx,
+        y: (rowOf.get(rawDepth.get(n.id)!) ?? 0) * MINI_ROW,
+      },
+    ]),
+  );
 
   const miniNodes: MiniNode[] = visible.map((n) => {
     const p = points.get(n.id)!;
     const answerId = pairing.answerOf.get(n.id);
     return {
       id: n.id,
-      x: p.x - minX,
-      y: p.y - minY,
+      x: p.x,
+      y: p.y,
       role: n.role,
       // 合并卡里只要有一头在链上，这个圆就算在链上
       onPath: path.has(n.id) || (!!answerId && path.has(answerId)),
@@ -192,10 +214,10 @@ export function buildMiniGraph(nodes: NodeMap, selectedId: string | null): MiniG
       seen.add(id);
       miniEdges.push({
         id,
-        x1: a.x - minX,
-        y1: a.y - minY,
-        x2: b.x - minX,
-        y2: b.y - minY,
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
         onPath: path.has(source) && path.has(node.id),
       });
     }
