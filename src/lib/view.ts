@@ -12,6 +12,8 @@
  * 节点是滑过去而不是瞬移，眼睛能跟住每一个去了哪儿。
  * 这套位置不写回数据、不进撤销栈，纯粹是渲染层的事。
  */
+import type { NodeMap } from './context';
+
 export type ViewMode = 'edit' | 'map';
 
 /** 和主题一样存 localStorage：这是纯视图偏好，不该进画布数据 */
@@ -31,15 +33,72 @@ export const VIEW_LABEL: Record<ViewMode, string> = {
 };
 
 /*
- * 地图视图的卡片尺寸是**固定**的：摘要按两行截断，所有卡片一样大。
+ * 地图视图的卡片尺寸是**固定**的：摘要按行数截断。
  * 这样排出来是整齐的网格，而不是高矮不齐的一堆方块 —— 密度上去了，
  * 好看与否主要就取决于这一点。尺寸写死也让布局能在渲染前就算出来。
  */
 export const MAP_NODE_WIDTH = 232;
+/** 单条消息的卡片：身份行 + 两行摘要 */
 export const MAP_NODE_HEIGHT = 84;
+/** 一问一答合成的卡片：身份行 + 一行提问 + 两行回答 */
+export const MAP_TURN_HEIGHT = 108;
 /** 同层间距。参考图里的节点几乎是挨着的，留白靠卡片自身的内边距给 */
 export const MAP_NODE_SEP = 26;
 export const MAP_RANK_SEP = 46;
+
+export interface TurnPairing {
+  /** assistant 节点 id → 它被并进的那个 user 节点 id。这些节点不再单独出卡 */
+  mergedInto: Map<string, string>;
+  /** user 节点 id → 并进来的 assistant 节点 id */
+  answerOf: Map<string, string>;
+}
+
+/**
+ * 找出可以合成一张卡片的「一问一答」。
+ *
+ * 这纯粹是渲染层的合并，底层数据一个字都不动 —— 数据模型必须保持
+ * 一条消息一个节点，因为这个应用最要紧的特性正是「一个问题并排生成多个
+ * 回答」，合进去就没法表达了。同理，静音是逐节点的，多父合并接的也是
+ * assistant 节点而不是「问答对」。
+ *
+ * 合并条件卡得很死：提问**恰好**一个子节点、那是个 assistant、且它
+ * **恰好**一个父节点。松一点点都会出现「这个回答该算进哪张卡」说不清的情况。
+ *
+ * 这条严格规则还有个额外的好处：卡片恰好在分叉的地方裂开。一问一答的地方
+ * 安静地合成一张，一旦某个问题有两个回答、或者某个回答被两条分支共用，
+ * 卡片就自动分开 —— 而那正是这张图上唯一值得看的地方。
+ */
+export function pairTurns(nodes: NodeMap, hidden?: Set<string>): TurnPairing {
+  const mergedInto = new Map<string, string>();
+  const answerOf = new Map<string, string>();
+
+  // 先建一次子节点索引：每个节点各自遍历全表找孩子是 O(N²)
+  const children = new Map<string, string[]>();
+  for (const node of Object.values(nodes)) {
+    for (const parentId of node.parentIds) {
+      const list = children.get(parentId);
+      if (list) list.push(node.id);
+      else children.set(parentId, [node.id]);
+    }
+  }
+
+  for (const node of Object.values(nodes)) {
+    if (node.role !== 'user' || hidden?.has(node.id)) continue;
+
+    const kids = (children.get(node.id) ?? []).filter((id) => !hidden?.has(id));
+    if (kids.length !== 1) continue;
+
+    const answer = nodes[kids[0]!];
+    if (!answer || answer.role !== 'assistant') continue;
+    // 回答被多条分支共用时不能并：它属于哪一张卡是说不清的
+    if (answer.parentIds.length !== 1) continue;
+
+    mergedInto.set(answer.id, node.id);
+    answerOf.set(node.id, answer.id);
+  }
+
+  return { mergedInto, answerOf };
+}
 
 const RULES: Array<[RegExp, string]> = [
   // 代码块围栏整行去掉，只留里面的代码

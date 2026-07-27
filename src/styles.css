@@ -2408,11 +2408,6 @@ body.is-connecting .handle {
   filter: saturate(0.6);
 }
 
-.map-node.is-muted .map-summary {
-  text-decoration: line-through;
-  text-decoration-color: var(--text-3);
-  opacity: 0.65;
-}
 
 .map-node.is-error {
   border-color: color-mix(in srgb, var(--danger) 50%, transparent);
@@ -2508,4 +2503,66 @@ body.is-connecting .handle {
 
 .legend-line.alt {
   border-top: 1.5px dashed var(--edge);
+}
+
+/* ---------- 一问一答合成的卡片 ---------- */
+
+.map-node.is-turn {
+  height: 108px;
+}
+
+/* 提问是这张卡的标题：比回答重一档，一眼看过去先读到问的是什么 */
+.map-question {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+/* 没合并时这一行就是全部内容，可以占两行 */
+.map-node:not(.is-turn) .map-question {
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.map-question.is-empty {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.map-node.is-selected .map-question {
+  color: #fff;
+}
+
+.map-node.is-selected .map-question.is-empty {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.map-arrow {
+  color: var(--text-3);
+}
+
+.map-node.is-selected .map-arrow {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* 静音的那一条划掉，另一条不受影响 */
+.map-node.is-muted .map-question {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-3);
+  opacity: 0.65;
+}
+
+.map-node.answer-muted .map-summary {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-3);
+  opacity: 0.65;
 }

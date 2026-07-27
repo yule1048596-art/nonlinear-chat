@@ -36,29 +36,49 @@ export const MapNode = memo(function MapNode({ id, data, selected }: NodeProps) 
   const setViewMode = useStore((s) => s.setViewMode);
   const { setCenter } = useReactFlow();
 
-  if (!node) return null;
-
-  const { inContext, dimmed, hiddenCount = 0 } = (data ?? {}) as {
+  const {
+    inContext,
+    dimmed,
+    hiddenCount = 0,
+    answerId,
+  } = (data ?? {}) as {
     inContext?: boolean;
     dimmed?: boolean;
     hiddenCount?: number;
+    /** 一问一答合并时，并进这张卡的那个回答 */
+    answerId?: string;
   };
 
-  const streaming = node.status === 'streaming';
+  // 合并进来的回答。hook 不能放在 early return 后面，所以在这里取
+  const answer = useStore((s) => (answerId ? s.graph?.nodes[answerId] : undefined));
+
+  if (!node) return null;
+
+  // 合并之后这张卡代表一整轮，状态和用量要把两条消息一起算进去
+  const streaming = node.status === 'streaming' || answer?.status === 'streaming';
+  const failed = node.status === 'error' || answer?.status === 'error';
   const nodeInContext = isInContext(node);
   const overridden = nodeInContext !== inContextByDefault(node.role);
-  const summary = summarize(node.content, 64);
-  const tokens = estimateTokens(node.content);
+  /*
+   * 静音是逐节点的，合并之后这张卡里有两条消息。最常见的用法恰恰是
+   * 「留着这个答歪的回答，但别带进下一轮」—— 只看提问的话这个状态就丢了。
+   */
+  const answerMuted = !!answer && !isInContext(answer);
+  const summary = summarize(node.content, answer ? 40 : 64);
+  const answerSummary = answer ? summarize(answer.content, 60) : '';
+  const tokens = estimateTokens(node.content) + (answer ? estimateTokens(answer.content) : 0);
 
   const classes = [
     'map-node',
+    answer ? 'is-turn' : '',
     `node-${node.role}`,
     selected ? 'is-selected' : '',
     inContext ? 'in-context' : '',
     dimmed ? 'is-dimmed' : '',
     !nodeInContext ? 'is-muted' : '',
+    answerMuted ? 'answer-muted' : '',
     streaming ? 'is-streaming' : '',
-    node.status === 'error' ? 'is-error' : '',
+    failed ? 'is-error' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -66,7 +86,11 @@ export const MapNode = memo(function MapNode({ id, data, selected }: NodeProps) 
   return (
     <div
       className={classes}
-      title={summary || EMPTY_LABEL[node.role]}
+      title={
+        answer
+          ? `${summary || EMPTY_LABEL[node.role]}\n\n${answerSummary || EMPTY_LABEL.assistant}`
+          : summary || EMPTY_LABEL[node.role]
+      }
       onDoubleClick={() => {
         setViewMode('edit');
         // 编辑视图的卡片高得多，往下偏一点才不会把标题顶到屏幕外
@@ -77,13 +101,16 @@ export const MapNode = memo(function MapNode({ id, data, selected }: NodeProps) 
 
       <header className="map-head">
         <span className="role-dot" />
-        <span className="map-role">{ROLE_LABEL[node.role]}</span>
+        <span className="map-role">
+          {ROLE_LABEL[node.role]}
+          {answer && <span className="map-arrow"> → {ROLE_LABEL.assistant}</span>}
+        </span>
         {streaming && <span className="pulse" title="生成中" />}
 
         <span className="spacer" />
 
-        {node.status === 'error' && (
-          <span className="map-flag error" title={node.error}>
+        {failed && (
+          <span className="map-flag error" title={node.error ?? answer?.error}>
             失败
           </span>
         )}
@@ -93,6 +120,7 @@ export const MapNode = memo(function MapNode({ id, data, selected }: NodeProps) 
             {nodeInContext ? '已加入' : '已静音'}
           </span>
         )}
+        {answerMuted && !overridden && <span className="map-flag off">回答已静音</span>}
         {node.subtreeCollapsed && (
           <button
             className="map-flag collapsed nodrag"
@@ -108,9 +136,15 @@ export const MapNode = memo(function MapNode({ id, data, selected }: NodeProps) 
         {tokens > 0 && <span className="map-tokens">≈{formatTokens(tokens)}</span>}
       </header>
 
-      <p className={summary ? 'map-summary' : 'map-summary is-empty'}>
+      <p className={summary ? 'map-question' : 'map-question is-empty'}>
         {summary || EMPTY_LABEL[node.role]}
       </p>
+
+      {answer && (
+        <p className={answerSummary ? 'map-summary' : 'map-summary is-empty'}>
+          {answerSummary || EMPTY_LABEL.assistant}
+        </p>
+      )}
 
       <Handle type="source" position={Position.Bottom} className="handle" />
     </div>

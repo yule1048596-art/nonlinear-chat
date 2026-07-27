@@ -23,6 +23,8 @@ import {
   MAP_NODE_SEP,
   MAP_NODE_WIDTH,
   MAP_RANK_SEP,
+  MAP_TURN_HEIGHT,
+  pairTurns,
 } from '../lib/view';
 import { toast } from '../lib/toast';
 import { ContextMenu, type MenuAnchor, type MenuItem } from './ContextMenu';
@@ -154,15 +156,45 @@ export function Canvas() {
       .join('|');
   }, [nodes]);
 
-  const mapPositions = useMemo(() => {
+  /** 能合成一张卡的「一问一答」。底层数据不动，纯渲染层的事 */
+  const pairing = useMemo(() => {
     const all = nodesRef.current;
     if (viewMode !== 'map' || !all) return null;
-    // 被折叠藏起来的节点不参与排版，否则会在图里留下一片空洞
+    return pairTurns(all, hidden);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, structureKey, hidden]);
+
+  const mapPositions = useMemo(() => {
+    const all = nodesRef.current;
+    if (viewMode !== 'map' || !all || !pairing) return null;
+
+    /*
+     * 排版用的是一张「合并之后」的图：被并进卡片的回答不再是独立节点，
+     * 它的下游得改挂到提问上，否则 computeLayout 找不到父节点，
+     * 会把整条下游当成新的根节点甩到一边去。
+     */
+    const resolve = (id: string) => pairing.mergedInto.get(id) ?? id;
     const visible: NodeMap = {};
-    for (const [id, node] of Object.entries(all)) if (!hidden.has(id)) visible[id] = node;
+    for (const [id, node] of Object.entries(all)) {
+      if (hidden.has(id) || pairing.mergedInto.has(id)) continue;
+      const parentIds = [
+        ...new Set(
+          node.parentIds
+            .map(resolve)
+            .filter((p) => p !== id && !hidden.has(p) && !pairing.mergedInto.has(p)),
+        ),
+      ];
+      visible[id] = { ...node, parentIds };
+    }
 
     const dimensions = new Map(
-      Object.keys(visible).map((id) => [id, { width: MAP_NODE_WIDTH, height: MAP_NODE_HEIGHT }]),
+      Object.keys(visible).map((id) => [
+        id,
+        {
+          width: MAP_NODE_WIDTH,
+          height: pairing.answerOf.has(id) ? MAP_TURN_HEIGHT : MAP_NODE_HEIGHT,
+        },
+      ]),
     );
     return computeLayout(visible, {
       dimensions,
@@ -171,7 +203,7 @@ export function Canvas() {
     });
     // nodesRef 不入依赖是有意的，见上面的说明
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, structureKey, hidden]);
+  }, [viewMode, structureKey, hidden, pairing]);
 
   /**
    * 流式输出时 nodes 每 33ms 变一次。如果每次都重建 React Flow 的节点对象，
@@ -189,7 +221,10 @@ export function Canvas() {
     const type = isMap ? 'map' : 'message';
 
     for (const node of Object.values(nodes)) {
+      // 被并进某张卡片的回答不再单独出节点
+      if (isMap && pairing?.mergedInto.has(node.id)) continue;
       alive.add(node.id);
+      const answerId = isMap ? pairing?.answerOf.get(node.id) : undefined;
       const isSelected = node.id === selectedId;
       const inContext = contextSet.has(node.id) && !isSelected;
       // 只有「存在选中节点、需要拿它作对比」时才淡化旁支。
@@ -213,7 +248,8 @@ export function Canvas() {
         (prev.data as { inContext: boolean }).inContext === inContext &&
         (prev.data as { dimmed: boolean }).dimmed === dimmed &&
         (prev.data as { hiddenCount: number }).hiddenCount === hiddenCount &&
-        (prev.data as { hasChildren: boolean }).hasChildren === hasChildren
+        (prev.data as { hasChildren: boolean }).hasChildren === hasChildren &&
+        (prev.data as { answerId?: string }).answerId === answerId
       ) {
         out.push(prev);
         continue;
@@ -227,14 +263,28 @@ export function Canvas() {
         hidden: isHidden,
         // 地图视图的坐标是算出来的，拖动它没有意义，拖了也会在下次重排时被冲掉
         draggable: !isMap,
-        data: { inContext, dimmed, hiddenCount, hasChildren },
+        // 地图视图是只读的：合并之后连线的两端和数据里的父子关系已经对不上了，
+        // 让它可连可删只会连错、删错
+        connectable: !isMap,
+        data: { inContext, dimmed, hiddenCount, hasChildren, answerId },
       };
       cache.set(node.id, next);
       out.push(next);
     }
     for (const key of [...cache.keys()]) if (!alive.has(key)) cache.delete(key);
     return out;
-  }, [nodes, selectedId, contextSet, dimsVersion, hidden, hiddenCounts, parentIds, viewMode, mapPositions]);
+  }, [
+    nodes,
+    selectedId,
+    contextSet,
+    dimsVersion,
+    hidden,
+    hiddenCounts,
+    parentIds,
+    viewMode,
+    mapPositions,
+    pairing,
+  ]);
 
   const rfEdges = useMemo<Edge[]>(() => {
     if (!nodes) return [];
@@ -245,9 +295,16 @@ export function Canvas() {
     const isMap = viewMode === 'map';
 
     for (const node of Object.values(nodes)) {
+      // 被并进卡片的回答不出边：它和提问之间那条边成了卡片内部的事
+      if (isMap && pairing?.mergedInto.has(node.id)) continue;
       for (const parentId of node.parentIds) {
         if (!nodes[parentId]) continue;
-        const id = `${parentId}->${node.id}`;
+        // 父节点被并进某张卡时，边改从那张卡（也就是提问节点）出发
+        const source = isMap ? (pairing?.mergedInto.get(parentId) ?? parentId) : parentId;
+        if (source === node.id) continue;
+        const id = `${source}->${node.id}`;
+        // 改挂之后可能和已有的边重合（比如同时挂着提问和它的回答）
+        if (alive.has(id)) continue;
         alive.add(id);
         const active = contextSet.has(parentId) && contextSet.has(node.id);
         // 只要有一端被折叠藏起来，这条边就没有意义了
@@ -275,12 +332,14 @@ export function Canvas() {
         }
         const next: Edge = {
           id,
-          source: parentId,
+          source,
           target: node.id,
           type,
           animated,
           hidden: isHidden,
           className,
+          // 合并之后这条边的两端和数据里的父子关系对不上，删它会断错连接
+          deletable: !isMap,
           ...(isMap ? {} : { markerEnd: EDGE_MARKER }),
         };
         cache.set(id, next);
@@ -289,7 +348,7 @@ export function Canvas() {
     }
     for (const key of [...cache.keys()]) if (!alive.has(key)) cache.delete(key);
     return out;
-  }, [nodes, contextSet, hidden, viewMode]);
+  }, [nodes, contextSet, hidden, viewMode, pairing]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
