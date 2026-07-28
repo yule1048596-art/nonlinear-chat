@@ -91,6 +91,7 @@ export function buildDeck(nodes: NodeMap, targetId: string | null): Deck {
    * 真要走哪条还是底部那个分支选择器说了算。
    */
   const ahead: FocusCard[] = [];
+  const seen = new Set(cards.map((c) => c.id));
   let tail = cards[at]?.nodeIds[cards[at]!.nodeIds.length - 1];
   for (let k = 0; k < AHEAD && tail; k++) {
     const next = (childrenOf.get(tail) ?? [])
@@ -101,6 +102,19 @@ export function buildDeck(nodes: NodeMap, targetId: string | null): Deck {
     const card = buildDeck(nodes, next.id);
     const found = card.cards[card.index];
     if (!found) break;
+    /*
+     * 前方那张有可能就是牌堆里已有的那张。
+     *
+     * 停在一个还没走到回答的提问上时，当前卡是「提问」单独一张；
+     * 而往前一步是它的回答，那条链上提问和回答会合并成一张 ——
+     * 合并卡的 id 用的是提问的 id，于是同一个 id 出现了两次。
+     * 渲染层按 card.id 做 key（翻页要靠它复用 DOM 才有过渡），
+     * key 一撞 React 就会丢掉其中一张。
+     *
+     * 这两张本来也是同一轮，摆两次没有意义，直接不摆。
+     */
+    if (seen.has(found.id)) break;
+    seen.add(found.id);
     ahead.push(found);
     tail = found.nodeIds[found.nodeIds.length - 1];
   }

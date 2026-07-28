@@ -371,4 +371,36 @@ describe('前方预览（给动画留落点）', () => {
   it('空牌堆时前方也是空的', () => {
     expect(buildDeck({}, null).ahead).toEqual([]);
   });
+
+  /*
+   * 停在一个还没走到的提问上：当前卡是「提问」单独一张，
+   * 而往前一步的那条链会把提问和回答合并成一张，合并卡的 id 还是提问的 id。
+   * 两边撞成同一个 id，渲染层按 id 做 key 就会丢掉其中一张。
+   */
+  it('前方那张和牌堆里已有的是同一轮时不重复摆', () => {
+    const g = graph(node('q', 'user'), node('a', 'assistant', ['q']));
+
+    const atQuestion = buildDeck(g, 'q');
+    expect(atQuestion.cards.map((c) => c.id)).toEqual(['q']);
+    expect(atQuestion.ahead).toEqual([]);
+
+    // 走到回答上，同一轮就是合并后的那一张，仍然只有一个 q
+    const atAnswer = buildDeck(g, 'a');
+    expect(atAnswer.cards.map((c) => c.id)).toEqual(['q']);
+    expect(atAnswer.cards[0]?.nodeIds).toEqual(['q', 'a']);
+  });
+
+  it('cards 和 ahead 合起来 id 不重复', () => {
+    const g = graph(
+      node('q1', 'user'),
+      node('a1', 'assistant', ['q1']),
+      node('q2', 'user', ['a1']),
+      node('a2', 'assistant', ['q2']),
+    );
+    for (const target of ['q1', 'a1', 'q2', 'a2']) {
+      const deck = buildDeck(g, target);
+      const ids = [...deck.cards, ...deck.ahead].map((c) => c.id);
+      expect(new Set(ids).size, `目标 ${target}：${ids.join(',')}`).toBe(ids.length);
+    }
+  });
 });

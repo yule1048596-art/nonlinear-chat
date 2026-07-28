@@ -3258,6 +3258,54 @@ body.is-connecting .handle {
   width: 100%;
 }
 
+/* 下一问的落点：两选一，一直可见，不随输入框空不空变淡 */
+.focus-anchor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.focus-anchor button {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition:
+    color 0.14s var(--ease),
+    background 0.14s var(--ease),
+    border-color 0.14s var(--ease);
+}
+
+.focus-anchor button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.focus-anchor button.is-on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.focus-anchor button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.focus-anchor button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.focus-anchor .focus-hint {
+  margin-left: 2px;
+}
+
 /* 附件缩略图排在输入框上方，不挤占打字的地方 */
 .focus-compose .attach-strip {
   margin: 0 0 0 4px;

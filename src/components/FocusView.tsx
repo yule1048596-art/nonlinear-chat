@@ -15,6 +15,7 @@ import { AutoTextarea } from './AutoTextarea';
 import { Markdown } from './Markdown';
 import { AttachButton, NodeAttachments } from './NodeAttachments';
 import { findSiblings } from '../lib/markdown';
+import { placeChild } from '../lib/layout';
 import { toast } from '../lib/toast';
 import type { ChatNode, NodeRole } from '../types';
 
@@ -52,6 +53,15 @@ export function FocusView() {
    * 这正是原来「追问」按钮在做的事，现在收进输入框里，不再单列一个按钮。
    */
   const [draftNodeId, setDraftNodeId] = useState<string | null>(null);
+  /*
+   * 下一问挂在哪：`tail` 接在这一轮的回答后面，`head` 挂回这一轮的提问上
+   * ——后者就是原来的「分支」。
+   *
+   * 做成一直摆在那里的两选一，而不是「发送」旁边多一个按钮：那个按钮
+   * 只在输入框有字时才可用，空框时被 opacity 压到 0.4，看着就是没有。
+   * 落点是**发送之前要先决定**的事，不该长得像第二个提交键。
+   */
+  const [anchor, setAnchor] = useState<'tail' | 'head'>('tail');
 
   const deck = useMemo(() => buildDeck(nodes ?? {}, selectedId), [nodes, selectedId]);
   const current = deck.cards[deck.index];
@@ -63,6 +73,7 @@ export function FocusView() {
   useEffect(() => {
     setDraft('');
     setDraftNodeId(null);
+    setAnchor('tail'); // 落点是相对这张卡说的，换卡就得回到默认
   }, [current?.id]);
 
   /*
@@ -90,25 +101,49 @@ export function FocusView() {
   /** 这张卡的两个落点：接着问挂在末节点上，另起分支挂在提问上 */
   const tailId = current?.nodeIds[current.nodeIds.length - 1];
   const headId = current?.questionId ?? current?.nodeIds[0];
-  // 单节点卡（比如独立的回答、批注）两个落点是同一个，就不必给两个按钮
+  // 单节点卡（还没有回答的提问、独立的回答、批注）两个落点本来就是同一个
   const canFork = !!headId && !!tailId && headId !== tailId;
+  const anchorId = anchor === 'head' && canFork ? headId : tailId;
 
-  /** 就地建出草稿节点，「附件」要挂到它上面 */
+  /**
+   * 就地建出草稿节点，「附件」要挂到它上面。
+   *
+   * 两处都是为了不把人从当前这张卡上带走：
+   *
+   * 1. `addChild` 会把选中项挪到新节点上，牌堆跟着翻页 —— 可这只是个
+   *    占位的空草稿，翻过去看到的就是一张空卡。建完立刻把选中项还回去。
+   * 2. **一律挂在末节点上**，哪怕这会儿选的是「另起分支」。挂在提问上
+   *    会让提问多出一个子节点，一问一答就不再合并，这张卡当场裂成两张，
+   *    `current.id` 一变，上面那个 effect 就把草稿绑定清空了 ——
+   *    附件挂上去了，输入框却不认它。真正的落点在发送时才定。
+   */
   const ensureDraftNode = () => {
     if (draftNodeId) return draftNodeId;
     if (!tailId) return null;
+    const keep = selectedId;
     const id = addChild(tailId, 'user');
+    if (keep) select(keep);
     if (id) setDraftNodeId(id);
     return id;
   };
 
-  const submit = (anchorId: string | undefined) => {
+  const submit = () => {
     const text = draft.trim();
     if (!text || !anchorId) return;
     // 已经为附件建过草稿节点就复用它，否则现建一个
     const id = draftNodeId ?? addChild(anchorId, 'user');
     if (!id) return;
-    updateNode(id, { content: text });
+    const patch: Partial<ChatNode> = { content: text };
+    // 草稿是挂在末节点上建的，这里才把它改挂到真正选的落点
+    const parent = nodes[anchorId];
+    if (parent && nodes[id] && nodes[id].parentIds[0] !== anchorId) {
+      // 排位置时要把草稿自己排除掉，否则它占着的那格会被当成「有人了」
+      const others = { ...nodes };
+      delete others[id];
+      patch.parentIds = [anchorId];
+      patch.position = placeChild(others, [parent]);
+    }
+    updateNode(id, patch);
     setDraft('');
     setDraftNodeId(null);
     void send(id);
@@ -157,32 +192,52 @@ export function FocusView() {
         </button>
 
         <div className="focus-compose">
+          {/*
+            * 落点选择器。一直摆在这儿，不随输入框空不空变样 ——
+            * 「分支」是这个视图里唯一能开出新路的动作，它不能时隐时现。
+            */}
+          <div className="focus-anchor" role="group" aria-label="下一问挂在哪">
+            <button
+              className={anchor === 'tail' || !canFork ? 'is-on' : ''}
+              onClick={() => setAnchor('tail')}
+              title="挂在这一轮的回答后面，顺着往下走"
+            >
+              接着问
+            </button>
+            <button
+              className={anchor === 'head' && canFork ? 'is-on' : ''}
+              disabled={!canFork}
+              onClick={() => setAnchor('head')}
+              title={
+                canFork
+                  ? '挂回这一轮的提问上，从同一个问题另开一条路（原来的「分支」）'
+                  : '这一轮还只有一个节点，两个落点是同一个，等有了回答再分'
+              }
+            >
+              另起分支
+            </button>
+            {draftNodeId && <span className="focus-hint">已建好草稿节点，附件挂在它上面</span>}
+          </div>
           {draftNodeId && <NodeAttachments nodeId={draftNodeId} />}
           <div className="focus-input">
             <AttachButton nodeId={draftNodeId} onNeedNode={ensureDraftNode} />
             <textarea
               rows={1}
               value={draft}
-              placeholder="接着问……（⌘/Ctrl + Enter 发送）"
+              placeholder={
+                anchor === 'head' && canFork
+                  ? '从这一轮的提问另开一条……（⌘/Ctrl + Enter 发送）'
+                  : '接着问……（⌘/Ctrl + Enter 发送）'
+              }
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault();
-                  submit(tailId);
+                  submit();
                 }
               }}
             />
-            {canFork && (
-              <button
-                className="btn"
-                disabled={!draft.trim()}
-                title="不接在回答后面，而是从这一轮的提问处另开一条路"
-                onClick={() => submit(headId)}
-              >
-                另起分支
-              </button>
-            )}
-            <button className="btn primary" disabled={!draft.trim()} onClick={() => submit(tailId)}>
+            <button className="btn primary" disabled={!draft.trim()} onClick={submit}>
               发送
             </button>
           </div>
@@ -286,7 +341,7 @@ function CardActions({ node }: { node: ChatNode }) {
               * 这里原本还有「追问」。它和底部输入框、以及提问那条上的「分支」
               * 是同一件事的三个变体 —— 都只是在某个节点下面建一个空的提问节点，
               * 差别仅在挂点。三个入口做一件事，一屏两个输入框，只会让人猜。
-              * 现在统一收进底部：发送 = 接在回答后面，另起分支 = 接在提问上。
+              * 现在统一收进底部：落点由输入框上方那个两选一决定。
               */}
             <button className="btn" onClick={() => void regenerate(node.id)} title="就地重新生成">
               重生
