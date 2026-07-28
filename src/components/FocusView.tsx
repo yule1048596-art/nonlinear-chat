@@ -12,8 +12,10 @@ import { modelLabel, summarize } from '../lib/view';
 import { estimateTokens, formatTokens } from '../lib/tokens';
 import { isInContext } from '../lib/context';
 import { Markdown } from './Markdown';
-import { NodeAttachments } from './NodeAttachments';
-import type { NodeRole } from '../types';
+import { AttachButton, NodeAttachments } from './NodeAttachments';
+import { findSiblings } from '../lib/markdown';
+import { toast } from '../lib/toast';
+import type { ChatNode, NodeRole } from '../types';
 
 const ROLE_LABEL: Record<NodeRole, string> = {
   system: '系统',
@@ -197,6 +199,115 @@ function stackStyle(offset: number): React.CSSProperties {
   };
 }
 
+/**
+ * 一个节点的操作条。
+ *
+ * 聚焦视图一开始是只读的 —— 那是个设计失误：它恰恰是唯一把一整轮对话
+ * 完整摊开的地方，最该能直接动手。为了改一句话要切回编辑视图，
+ * 正是这个视图想省掉的那道来回。
+ *
+ * 动作和编辑视图完全一致（同一批 store action），只是按「提问 / 回答」
+ * 分成两条，各自贴着它作用的那半张卡 —— 否则一排按钮堆在卡底，
+ * 看不出「重生」重生的是谁。
+ */
+function CardActions({ node }: { node: ChatNode }) {
+  const updateNode = useStore((s) => s.updateNode);
+  const removeNode = useStore((s) => s.removeNode);
+  const addChild = useStore((s) => s.addChild);
+  const regenerate = useStore((s) => s.regenerate);
+  const branchRegenerate = useStore((s) => s.branchRegenerate);
+  const setCompare = useStore((s) => s.setCompare);
+  const stop = useStore((s) => s.stop);
+  // 聚焦视图一次只显示一张卡，这里调一次不像画布上那样是 O(N²)
+  const siblingCount = useStore((s) => (s.graph ? findSiblings(s.graph.nodes, node.id).length : 0));
+  const [copied, setCopied] = useState(false);
+
+  const streaming = node.status === 'streaming';
+  const inContext = isInContext(node);
+
+  const copy = () => {
+    void navigator.clipboard.writeText(node.content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    });
+  };
+
+  return (
+    <div className="focus-actions">
+      {node.role === 'assistant' ? (
+        streaming ? (
+          <button className="btn solid" onClick={() => stop(node.id)}>
+            停止
+          </button>
+        ) : (
+          <>
+            <button className="btn solid" onClick={() => addChild(node.id, 'user')}>
+              追问
+            </button>
+            <button className="btn" onClick={() => void regenerate(node.id)} title="就地重新生成">
+              重生
+            </button>
+            <button
+              className="btn"
+              onClick={() => void branchRegenerate(node.id)}
+              title="保留这个回答，在旁边并排生成另一个版本"
+            >
+              并排
+            </button>
+            {siblingCount > 1 && (
+              <button
+                className="btn"
+                onClick={() => setCompare(node.id)}
+                title={`和同一个问题的另外 ${siblingCount - 1} 个回答并排比较`}
+              >
+                对比 {siblingCount}
+              </button>
+            )}
+          </>
+        )
+      ) : (
+        <>
+          <AttachButton nodeId={node.id} />
+          <button className="btn" onClick={() => addChild(node.id, 'user')} title="接一个新的提问节点">
+            分支
+          </button>
+        </>
+      )}
+
+      <span className="spacer" />
+
+      <button
+        className="icon-btn"
+        title={
+          inContext
+            ? '在上下文中 · 点击静音（留着但不发出去）'
+            : node.role === 'note'
+              ? '批注默认不进上下文 · 点击让它参与'
+              : '已静音 · 点击恢复'
+        }
+        onClick={() => updateNode(node.id, { contextMode: inContext ? 'exclude' : 'include' })}
+      >
+        {inContext ? '◉' : '◌'}
+      </button>
+      {node.content && (
+        <button className="icon-btn" title="复制内容" onClick={copy}>
+          {copied ? '✓' : '⧉'}
+        </button>
+      )}
+      <button
+        className="icon-btn danger"
+        title="删除（按住 Shift 连同所有下游一起删）"
+        onClick={(e) => {
+          const count = removeNode(node.id, e.shiftKey);
+          toast(count > 1 ? `已删除 ${count} 个节点 · ⌘Z 撤销` : '已删除 · ⌘Z 撤销');
+        }}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
 /** 一张卡：标题 + 右对齐的提问 + 正文回答。offset 决定它在牌堆里的第几层 */
 function Card({ card, offset }: { card: FocusCard; offset: number }) {
   const nodes = useStore((s) => s.graph?.nodes);
@@ -236,6 +347,8 @@ function Card({ card, offset }: { card: FocusCard; offset: number }) {
           <div className="focus-ask">
             <div className="focus-bubble">{question.content || '（空提问）'}</div>
             <NodeAttachments nodeId={question.id} />
+            {/* 只有最前那张能操作：后面几张被挡得只剩边角，放按钮没意义 */}
+            {offset === 0 && <CardActions node={question} />}
           </div>
         )}
 
@@ -243,6 +356,7 @@ function Card({ card, offset }: { card: FocusCard; offset: number }) {
           <div className={`focus-lone node-${lone.role}`}>
             <span className="focus-role">{ROLE_LABEL[lone.role]}</span>
             <Markdown>{lone.content || '（空）'}</Markdown>
+            {offset === 0 && <CardActions node={lone} />}
           </div>
         )}
 
@@ -256,6 +370,7 @@ function Card({ card, offset }: { card: FocusCard; offset: number }) {
               </p>
             )}
             {answer.error && <div className="node-error">{answer.error}</div>}
+            {offset === 0 && <CardActions node={answer} />}
           </div>
         )}
       </div>

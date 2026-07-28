@@ -3155,3 +3155,30 @@ body.is-connecting .handle {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+/* 聚焦视图里的操作条。贴着它作用的那半张卡，而不是全堆在卡底 */
+.focus-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+
+/* 提问那条贴在气泡下面，跟着气泡靠右 */
+.focus-ask .focus-actions {
+  align-self: stretch;
+}
+
+/*
+ * 常驻显示，不做悬停才出现。
+ *
+ * 编辑视图里节点密集，藏起来是对的；这里满屏只有一张卡、下半张本来就空着，
+ * 再藏就成了「功能好像没有」—— 这正是它被提出来的原因。
+ */
+
+.focus-actions .btn {
+  padding: 4px 9px;
+  font-size: 12px;
+}
