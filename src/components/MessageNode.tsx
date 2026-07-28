@@ -1,9 +1,10 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useStore } from '../store/useStore';
 import { toast } from '../lib/toast';
 import { inContextByDefault, isInContext } from '../lib/context';
 import type { NodeRole } from '../types';
+import { AutoTextarea } from './AutoTextarea';
 import { ContextMenu, type MenuAnchor } from './ContextMenu';
 import { Markdown } from './Markdown';
 import { AttachButton, NodeAttachments } from './NodeAttachments';
@@ -31,52 +32,6 @@ const PLACEHOLDER: Record<NodeRole, string> = {
   note: '画布批注，默认不进入上下文',
   assistant: '',
 };
-
-function AutoTextarea({
-  value,
-  placeholder,
-  onChange,
-  onSubmit,
-}: {
-  value: string;
-  placeholder: string;
-  onChange: (v: string) => void;
-  onSubmit?: () => void;
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 400)}px`;
-  }, [value]);
-
-  return (
-    <textarea
-      ref={ref}
-      /*
-       * rows=1 不能省。textarea 默认 rows=2，height:auto 时 scrollHeight
-       * 至少返回两行 —— 于是每个只有一行字的节点都白占一行的高度，
-       * 卡片底部那截「怎么调 padding 都消不掉的空白」就是从这来的。
-       */
-      rows={1}
-      className="node-input nodrag nowheel"
-      value={value}
-      placeholder={placeholder}
-      spellCheck={false}
-      onChange={(e) => onChange(e.target.value)}
-      onKeyDown={(e) => {
-        if (onSubmit && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-          e.preventDefault();
-          onSubmit();
-        }
-        // 别让画布把删除键当成「删除选中节点」
-        e.stopPropagation();
-      }}
-    />
-  );
-}
 
 export const MessageNode = memo(function MessageNode({ id, data, selected }: NodeProps) {
   const node = useStore((s) => s.graph?.nodes[id]);

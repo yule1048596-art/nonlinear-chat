@@ -11,6 +11,7 @@ import {
 import { modelLabel, summarize } from '../lib/view';
 import { estimateTokens, formatTokens } from '../lib/tokens';
 import { isInContext } from '../lib/context';
+import { AutoTextarea } from './AutoTextarea';
 import { Markdown } from './Markdown';
 import { AttachButton, NodeAttachments } from './NodeAttachments';
 import { findSiblings } from '../lib/markdown';
@@ -217,6 +218,7 @@ function CardActions({ node }: { node: ChatNode }) {
   const regenerate = useStore((s) => s.regenerate);
   const branchRegenerate = useStore((s) => s.branchRegenerate);
   const setCompare = useStore((s) => s.setCompare);
+  const send = useStore((s) => s.send);
   const stop = useStore((s) => s.stop);
   // 聚焦视图一次只显示一张卡，这里调一次不像画布上那样是 O(N²)
   const siblingCount = useStore((s) => (s.graph ? findSiblings(s.graph.nodes, node.id).length : 0));
@@ -267,6 +269,20 @@ function CardActions({ node }: { node: ChatNode }) {
         )
       ) : (
         <>
+          {/*
+            * 提问节点必须有「发送」。底部那个输入框是给这张卡再接一个子节点的，
+            * 填不了这一张 —— 少了它，「追问」建出来的空提问就是一张死卡。
+            */}
+          {node.role === 'user' && (
+            <button
+              className="btn primary"
+              disabled={!node.content.trim()}
+              onClick={() => void send(node.id)}
+              title="⌘/Ctrl + Enter"
+            >
+              发送
+            </button>
+          )}
           <AttachButton nodeId={node.id} />
           <button className="btn" onClick={() => addChild(node.id, 'user')} title="接一个新的提问节点">
             分支
@@ -311,13 +327,15 @@ function CardActions({ node }: { node: ChatNode }) {
 /** 一张卡：标题 + 右对齐的提问 + 正文回答。offset 决定它在牌堆里的第几层 */
 function Card({ card, offset }: { card: FocusCard; offset: number }) {
   const nodes = useStore((s) => s.graph?.nodes);
+  const updateNode = useStore((s) => s.updateNode);
+  const send = useStore((s) => s.send);
   const question = card.questionId ? nodes?.[card.questionId] : undefined;
   const answer = card.answerId ? nodes?.[card.answerId] : undefined;
   const lone = !question && !answer ? nodes?.[card.id] : undefined;
   const head = question ?? lone;
   if (!head && !answer) return null;
 
-  const title = summarize(head?.content ?? answer?.content ?? '', 24) || '（空）';
+  const title = summarize(head?.content ?? answer?.content ?? '', 24) || '新的一轮';
   const tokens =
     estimateTokens(question?.content ?? '') +
     estimateTokens(answer?.content ?? '') +
@@ -345,9 +363,25 @@ function Card({ card, offset }: { card: FocusCard; offset: number }) {
       <div className="focus-card-body">
         {question && (
           <div className="focus-ask">
-            <div className="focus-bubble">{question.content || '（空提问）'}</div>
+            {/*
+              * 提问是可以改的，不是一段只读文字。
+              * 「追问」建出来的是一个空提问节点，没有输入框就永远填不进内容。
+              * 只有最前那张给输入框：后面几张被挡得只剩边角。
+              */}
+            {offset === 0 ? (
+              <AutoTextarea
+                className="focus-bubble focus-bubble-input"
+                value={question.content}
+                placeholder="写下这一轮要问的话……"
+                autoFocus={!question.content}
+                maxHeight={220}
+                onChange={(v) => updateNode(question.id, { content: v })}
+                onSubmit={() => void send(question.id)}
+              />
+            ) : (
+              <div className="focus-bubble">{question.content || '（还没写）'}</div>
+            )}
             <NodeAttachments nodeId={question.id} />
-            {/* 只有最前那张能操作：后面几张被挡得只剩边角，放按钮没意义 */}
             {offset === 0 && <CardActions node={question} />}
           </div>
         )}
@@ -355,7 +389,20 @@ function Card({ card, offset }: { card: FocusCard; offset: number }) {
         {lone && (
           <div className={`focus-lone node-${lone.role}`}>
             <span className="focus-role">{ROLE_LABEL[lone.role]}</span>
-            <Markdown>{lone.content || '（空）'}</Markdown>
+            {/* assistant 的正文是模型生成的，不给改；其余都能改 */}
+            {offset === 0 && lone.role !== 'assistant' ? (
+              <AutoTextarea
+                className="focus-lone-input"
+                value={lone.content}
+                placeholder={lone.role === 'user' ? '写下要问的话……' : '写点什么……'}
+                autoFocus={!lone.content}
+                maxHeight={260}
+                onChange={(v) => updateNode(lone.id, { content: v })}
+                onSubmit={lone.role === 'user' ? () => void send(lone.id) : undefined}
+              />
+            ) : (
+              <Markdown>{lone.content || '（还没写）'}</Markdown>
+            )}
             {offset === 0 && <CardActions node={lone} />}
           </div>
         )}

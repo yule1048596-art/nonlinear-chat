@@ -2918,16 +2918,23 @@ body.is-connecting .handle {
   padding: 18px 24px 24px;
 }
 
-/* 提问靠右成一个气泡，和回答的正文拉开身份 */
+/*
+ * 提问靠右成一个气泡，和回答的正文拉开身份。
+ *
+ * 靠 margin-left:auto 右对齐，不用 align-items:flex-end —— 后者会把子元素
+ * 收缩到内容宽度，跟输入框的百分比宽度打架，实测把输入框压成了 30px。
+ */
 .focus-ask {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: stretch;
   margin-bottom: 18px;
 }
 
 .focus-bubble {
+  width: fit-content;
   max-width: 78%;
+  margin-left: auto;
   padding: 9px 14px;
   border-radius: 14px 14px 4px 14px;
   background: var(--surface-3);
@@ -3181,4 +3188,57 @@ body.is-connecting .handle {
 .focus-actions .btn {
   padding: 4px 9px;
   font-size: 12px;
+}
+
+/*
+ * 提问气泡本身就是输入框。
+ *
+ * 聚焦视图当初把提问渲染成只读文本，于是「追问」建出来的空节点没地方填内容 ——
+ * 一张永远写不了的死卡。它必须是能打字的。
+ */
+.focus-bubble-input {
+  display: block;
+  /* 必须给显式宽度：textarea 不给就按 cols=20 算，几个中文字就被挤成好几行 */
+  width: 78%;
+  max-width: 78%;
+  margin-left: auto;
+  border: 1px solid transparent;
+  outline: none;
+  resize: none;
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.6;
+  overflow-y: auto;
+  transition: border-color 0.16s var(--ease), background 0.16s var(--ease);
+}
+
+.focus-bubble-input::placeholder {
+  color: var(--text-3);
+}
+
+.focus-bubble-input:hover {
+  border-color: var(--border);
+}
+
+.focus-bubble-input:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.focus-lone-input {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.8;
+  padding: 0;
+}
+
+.focus-lone-input::placeholder {
+  color: var(--text-3);
 }
