@@ -46,6 +46,12 @@ export function FocusView() {
   const updateNode = useStore((s) => s.updateNode);
 
   const [draft, setDraft] = useState('');
+  /*
+   * 附件必须挂在一个真实节点上，可「还没发出去的下一问」并不存在。
+   * 所以点「附件」时就地建出这个节点，输入框随后就绑定到它 ——
+   * 这正是原来「追问」按钮在做的事，现在收进输入框里，不再单列一个按钮。
+   */
+  const [draftNodeId, setDraftNodeId] = useState<string | null>(null);
 
   const deck = useMemo(() => buildDeck(nodes ?? {}, selectedId), [nodes, selectedId]);
   const current = deck.cards[deck.index];
@@ -53,7 +59,11 @@ export function FocusView() {
   const prev = previousId(deck);
   const mini = useMemo(() => buildMiniGraph(nodes ?? {}, selectedId), [nodes, selectedId]);
 
-  useEffect(() => setDraft(''), [current?.id]);
+  // 换卡时清掉草稿。草稿节点不删 —— 上面可能已经挂了附件，删了文件就没了
+  useEffect(() => {
+    setDraft('');
+    setDraftNodeId(null);
+  }, [current?.id]);
 
   /*
    * 没有选中节点就自动落到最近动过的那个。否则切进来看到的是一句
@@ -77,14 +87,30 @@ export function FocusView() {
 
   if (!nodes) return null;
 
-  const ask = () => {
+  /** 这张卡的两个落点：接着问挂在末节点上，另起分支挂在提问上 */
+  const tailId = current?.nodeIds[current.nodeIds.length - 1];
+  const headId = current?.questionId ?? current?.nodeIds[0];
+  // 单节点卡（比如独立的回答、批注）两个落点是同一个，就不必给两个按钮
+  const canFork = !!headId && !!tailId && headId !== tailId;
+
+  /** 就地建出草稿节点，「附件」要挂到它上面 */
+  const ensureDraftNode = () => {
+    if (draftNodeId) return draftNodeId;
+    if (!tailId) return null;
+    const id = addChild(tailId, 'user');
+    if (id) setDraftNodeId(id);
+    return id;
+  };
+
+  const submit = (anchorId: string | undefined) => {
     const text = draft.trim();
-    if (!text || !current) return;
-    const anchor = current.nodeIds[current.nodeIds.length - 1]!;
-    const id = addChild(anchor, 'user');
+    if (!text || !anchorId) return;
+    // 已经为附件建过草稿节点就复用它，否则现建一个
+    const id = draftNodeId ?? addChild(anchorId, 'user');
     if (!id) return;
     updateNode(id, { content: text });
     setDraft('');
+    setDraftNodeId(null);
     void send(id);
   };
 
@@ -130,22 +156,36 @@ export function FocusView() {
           ↑ 上一轮
         </button>
 
-        <div className="focus-input">
-          <textarea
-            rows={1}
-            value={draft}
-            placeholder="接着问……（⌘/Ctrl + Enter 发送）"
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                ask();
-              }
-            }}
-          />
-          <button className="btn primary" disabled={!draft.trim()} onClick={ask}>
-            发送
-          </button>
+        <div className="focus-compose">
+          {draftNodeId && <NodeAttachments nodeId={draftNodeId} />}
+          <div className="focus-input">
+            <AttachButton nodeId={draftNodeId} onNeedNode={ensureDraftNode} />
+            <textarea
+              rows={1}
+              value={draft}
+              placeholder="接着问……（⌘/Ctrl + Enter 发送）"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  submit(tailId);
+                }
+              }}
+            />
+            {canFork && (
+              <button
+                className="btn"
+                disabled={!draft.trim()}
+                title="不接在回答后面，而是从这一轮的提问处另开一条路"
+                onClick={() => submit(headId)}
+              >
+                另起分支
+              </button>
+            )}
+            <button className="btn primary" disabled={!draft.trim()} onClick={() => submit(tailId)}>
+              发送
+            </button>
+          </div>
         </div>
 
         {choices.length <= 1 ? (
@@ -214,7 +254,6 @@ function stackStyle(offset: number): React.CSSProperties {
 function CardActions({ node }: { node: ChatNode }) {
   const updateNode = useStore((s) => s.updateNode);
   const removeNode = useStore((s) => s.removeNode);
-  const addChild = useStore((s) => s.addChild);
   const regenerate = useStore((s) => s.regenerate);
   const branchRegenerate = useStore((s) => s.branchRegenerate);
   const setCompare = useStore((s) => s.setCompare);
@@ -243,9 +282,12 @@ function CardActions({ node }: { node: ChatNode }) {
           </button>
         ) : (
           <>
-            <button className="btn solid" onClick={() => addChild(node.id, 'user')}>
-              追问
-            </button>
+            {/*
+              * 这里原本还有「追问」。它和底部输入框、以及提问那条上的「分支」
+              * 是同一件事的三个变体 —— 都只是在某个节点下面建一个空的提问节点，
+              * 差别仅在挂点。三个入口做一件事，一屏两个输入框，只会让人猜。
+              * 现在统一收进底部：发送 = 接在回答后面，另起分支 = 接在提问上。
+              */}
             <button className="btn" onClick={() => void regenerate(node.id)} title="就地重新生成">
               重生
             </button>
@@ -283,10 +325,8 @@ function CardActions({ node }: { node: ChatNode }) {
               发送
             </button>
           )}
+          {/* 「分支」也收进底部输入框了，见上面那段说明 */}
           <AttachButton nodeId={node.id} />
-          <button className="btn" onClick={() => addChild(node.id, 'user')} title="接一个新的提问节点">
-            分支
-          </button>
         </>
       )}
 

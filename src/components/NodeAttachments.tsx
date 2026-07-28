@@ -73,8 +73,20 @@ export function NodeAttachments({ nodeId }: { nodeId: string }) {
   );
 }
 
-/** 挂附件的按钮。放在节点操作栏里 */
-export function AttachButton({ nodeId }: { nodeId: string }) {
+/**
+ * 挂附件的按钮。
+ *
+ * onNeedNode 是给聚焦视图底部那个输入框用的：那里要挂附件的「下一问」
+ * 还不存在，附件又必须挂在真实节点上，所以由调用方就地建一个再挂。
+ * 节点已经存在时（画布上的节点）不传它即可。
+ */
+export function AttachButton({
+  nodeId,
+  onNeedNode,
+}: {
+  nodeId: string | null;
+  onNeedNode?: () => string | null;
+}) {
   const addAttachments = useStore((s) => s.addAttachments);
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -82,9 +94,11 @@ export function AttachButton({ nodeId }: { nodeId: string }) {
   const take = async (list: FileList | null) => {
     const files = Array.from(list ?? []);
     if (!files.length) return;
+    const target = nodeId ?? onNeedNode?.() ?? null;
+    if (!target) return;
     setBusy(true);
     try {
-      const { ok, failed } = await addAttachments(nodeId, files);
+      const { ok, failed } = await addAttachments(target, files);
       if (ok) toast(`已添加 ${ok} 个附件`);
       for (const f of failed) toast(`${f.name}：${f.error}`);
     } finally {

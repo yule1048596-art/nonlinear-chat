@@ -3242,3 +3242,23 @@ body.is-connecting .handle {
 .focus-lone-input::placeholder {
   color: var(--text-3);
 }
+
+/*
+ * 底部的撰写区：附件条 + 输入行。
+ * 「追问」「分支」原来各是一个按钮，现在都收在这里 —— 一屏只留一个输入口。
+ */
+.focus-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(660px, 100%);
+}
+
+.focus-compose .focus-input {
+  width: 100%;
+}
+
+/* 附件缩略图排在输入框上方，不挤占打字的地方 */
+.focus-compose .attach-strip {
+  margin: 0 0 0 4px;
+}
