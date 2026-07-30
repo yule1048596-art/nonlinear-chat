@@ -3258,6 +3258,39 @@ body.is-connecting .handle {
   width: 100%;
 }
 
+/* 次要出口折起来：主路径是 .nexus.zip，JSON 只留给知道自己要什么的人 */
+.hint-fold {
+  margin-top: 10px;
+}
+
+.hint-fold > summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--text-3);
+  list-style: none;
+  padding: 3px 0;
+}
+
+.hint-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.hint-fold > summary::before {
+  content: '▸ ';
+}
+
+.hint-fold[open] > summary::before {
+  content: '▾ ';
+}
+
+.hint-fold > summary:hover {
+  color: var(--text);
+}
+
+.hint-fold > .btn {
+  margin-top: 6px;
+}
+
 /* 下一问的落点：两选一，一直可见，不随输入框空不空变淡 */
 .focus-anchor {
   display: flex;

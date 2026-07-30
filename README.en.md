@@ -102,7 +102,9 @@ Everything else gets out of the way. Per-node action buttons are hidden until yo
 
 **Not losing work**
 - Automatic local snapshots, always taken before deleting / importing / rolling back; restore everything or just one canvas
-- Settings and full-backup export; exports omit API keys by default
+- Full backup archive `.nexus.zip`: canvases, settings, **original attachment files, knowledge-base sources and vectors** all in one package — import it on another machine and the set is complete. Before restoring, it reports exactly what the package contains, and warns on the spot if the counts don't add up
+- Exports omit every API key by default (both the model's and the embedding service's)
+- Switching canvases mid-generation doesn't interrupt it; the answer keeps writing back to the canvas it started on
 - Importing settings merges profiles and never overwrites your own
 
 **Also**
@@ -197,7 +199,9 @@ API keys, canvases and settings all live in the browser's **IndexedDB**. Nothing
 
 The hosted build is no different — [the deployed site](https://yule1048596-art.github.io/nonlinear-chat/) contains no keys. Every visitor uses their own, stored in their own browser, isolated from everyone else's.
 
-The trade-off: **clearing browser data wipes it all.** Export canvases you care about as JSON. Importing reassigns node ids, so the same file can be imported repeatedly without collisions.
+The trade-off: **clearing browser data wipes it all.** For anything you care about, use Settings → Data → "Export everything" to produce a `.nexus.zip` — it carries the original attachment files and knowledge-base vectors too, so importing it on another machine gives you the complete set.
+
+A single canvas can also be exported as JSON (toolbar ↓). Importing reassigns node ids, so the same file can be imported repeatedly without collisions — but **single-canvas JSON carries no attachments**; it is the canvas structure alone.
 
 ## Stack and layout
 
@@ -210,7 +214,8 @@ src/
 │   ├── context.ts        DAG → messages, provenance, collapse visibility (core, tested)
 │   ├── history.ts        Undo stack (pure functions, tested)
 │   ├── snapshots.ts      Snapshot signatures, dedup and pruning (tested)
-│   ├── backup.ts         Export packaging and settings merge (tested)
+│   ├── backup.ts         Export packaging, key stripping, settings merge (tested)
+│   ├── archive.ts        .nexus.zip full-backup packing and restore (tested)
 │   ├── markdown.ts       Path export and sibling lookup (tested)
 │   ├── search.ts         Node search with excerpt offsets (tested)
 │   ├── tokens.ts         Token estimation (tested)
@@ -220,7 +225,11 @@ src/
 │   ├── embeddings.ts     OpenAI-compatible /v1/embeddings client (tested)
 │   ├── knowledge.ts      vector retrieval and reference-block assembly (tested)
 │   ├── indexer.ts        parse → chunk → embed pipeline (tested)
-│   ├── db.ts             IndexedDB + debounced save with maxWait (tested)
+│   ├── db.ts             IndexedDB + per-canvas debounced save (tested)
+│   ├── attachments.ts    Attachment assembly, multimodal bodies, orphan detection (tested)
+│   ├── view.ts           The three view modes, Q&A pairing rule (tested)
+│   ├── focus.ts          Focus-view card deck and mini graph (tested)
+│   ├── endpoint.ts       Loopback detection and mixed-content warnings (tested)
 │   ├── autoLayout.ts     dagre layered layout
 │   ├── layout.ts         Collision-avoiding placement for new nodes
 │   ├── theme.ts          Light/dark themes
@@ -245,7 +254,9 @@ src/
 npm test
 ```
 
-146 tests covering DAG topological ordering, multi-parent merging, diamond deduplication, cycle detection, context trimming, collapse-visibility propagation, undo-stack coalescing and limits, token estimation, search-excerpt offsets, debounced-save timing, SSE stream parsing, snapshot dedup and pruning, backup merging, and path export.
+364 tests covering DAG topological ordering, multi-parent merging, diamond deduplication, cycle detection, context trimming, collapse-visibility propagation, undo-stack coalescing and limits, token estimation, search-excerpt offsets, debounced-save timing (including per-canvas slots), SSE stream parsing, snapshot dedup and pruning, backup merging, export key-stripping, archive pack/restore round-trips, attachment orphan detection, and path export.
+
+[`src/readme.test.ts`](src/readme.test.ts) watches the docs themselves: the test count and the "not done yet" list turn red the moment they drift from the code. A hand-synced number will always drift, so rather than re-checking it periodically, let it shout.
 
 To debug without spending real API credits, use the fake server in the repo:
 
@@ -303,6 +314,8 @@ notice; the software comes with no warranty.
 - `.pdf` parsing for the knowledge base
 - Cross-canvas search (currently the active canvas only)
 - Sharing / multi-device sync (needs a backend; this is purely local right now)
-- Image and file input
 - Keyboard navigation between nodes
 - **Internationalising the UI itself** — the interface is Chinese-only so far
+- Mobile layout (the toolbar and bottom bar overflow at 390px; there are no width breakpoints yet)
+- Accessibility: several buttons expose only a symbol like `◉` or `✕` as their name, and the mini graph is mouse-only
+- End-to-end tests (everything is unit-level today; cross-component flows are verified by hand)

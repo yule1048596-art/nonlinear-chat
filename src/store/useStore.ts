@@ -53,6 +53,13 @@ import {
   type FullBackup,
   type SettingsBackup,
 } from '../lib/backup';
+import {
+  buildArchive,
+  countPayload,
+  type ArchiveCounts,
+  type ArchiveManifest,
+  type ParsedArchive,
+} from '../lib/archive';
 import * as db from '../lib/db';
 
 const DEFAULT_SETTINGS: Settings = {
@@ -77,8 +84,27 @@ const DEFAULT_EMBEDDING_SETTINGS: EmbeddingSettings = { ...DEFAULT_EMBEDDING, to
 const uid = () => crypto.randomUUID();
 const now = () => Date.now();
 
-/** 正在跑的请求，放在 React 状态外面，避免每个 token 都触发无谓的重渲染 */
-const controllers = new Map<string, AbortController>();
+/**
+ * 正在跑的请求，放在 React 状态外面，避免每个 token 都触发无谓的重渲染。
+ *
+ * 带着 graphId 是因为生成不随画布切换而中断：人切走去别的画布看点东西，
+ * 回来时答案应该已经生成好了。写回时要认准当初那张画布，不能写进眼前这张。
+ */
+interface RunningTask {
+  controller: AbortController;
+  graphId: string;
+}
+
+const controllers = new Map<string, RunningTask>();
+
+/**
+ * 已经切走、但还有生成在往里写的画布。
+ *
+ * 它们不在 `state.graph` 里，可内存中这一份才是最新的 —— 磁盘上那份落后
+ * 一个防抖周期。切回去时必须优先拿这一份，否则刚生成的内容会被磁盘上的
+ * 旧版本盖掉。
+ */
+const detached = new Map<string, Graph>();
 
 /**
  * 被撤销/重做作废掉的生成。
@@ -233,6 +259,10 @@ interface State {
   /** 打包全部数据用于导出。includeKeys 默认关，导出文件常被到处传 */
   exportSettings: (includeKeys: boolean) => SettingsBackup;
   exportEverything: (includeKeys: boolean) => Promise<FullBackup>;
+  /** 完整备份包（.nexus.zip）：画布、设置、附件原件、知识库与向量 */
+  exportArchive: (includeKeys: boolean) => Promise<{ blob: Blob; manifest: ArchiveManifest }>;
+  /** 恢复完整备份包。整份替换，之前会自动打一个快照 */
+  restoreArchive: (parsed: ParsedArchive) => Promise<ArchiveCounts>;
   /** 只合并模型配置，不碰本地已有的。返回加了几条、跳过几条 */
   importSettings: (backup: SettingsBackup) => { added: number; skipped: number };
   /** 整份恢复：替换所有画布和设置，恢复前自动打快照 */
@@ -319,12 +349,101 @@ export const useStore = create<State>((set, get) => {
     syncHistoryFlags();
   };
 
+  /**
+   * 往**指定画布**写。生成任务专用。
+   *
+   * 眼前这张就走正常的 commit；已经切走的那张改内存里的副本再排队落盘。
+   * 两条路都不入历史 —— 流式每 33ms 一次，而且撤销栈是跟着当前画布走的，
+   * 后台那张的历史早在切走时就清掉了。
+   */
+  const commitTo = (graphId: string, mutate: (nodes: NodeMap) => void) => {
+    if (get().graph?.id === graphId) {
+      commit(mutate, { history: false });
+      return;
+    }
+    const graph = detached.get(graphId);
+    if (!graph) return; // 画布已经删了，写了也没地方去
+    const nodes = { ...graph.nodes };
+    mutate(nodes);
+    const next: Graph = { ...graph, nodes, updatedAt: now() };
+    detached.set(graphId, next);
+    saver.queue(next);
+  };
+
+  /** 一个画布上还有没有在跑的生成。没有了就不必再把它挂在 detached 里 */
+  const hasRunning = (graphId: string) =>
+    [...controllers.values()].some((t) => t.graphId === graphId);
+
+  /**
+   * 离开当前画布前的收尾。
+   *
+   * 上面还有生成在跑就把它挂进 detached —— 生成不因为切画布而中断，
+   * 但它得有个地方可写。历史是会话状态，跟着当前画布走，一律清掉。
+   */
+  const leaveCurrentGraph = () => {
+    saver.flush();
+    const graph = get().graph;
+    if (graph && hasRunning(graph.id)) detached.set(graph.id, graph);
+    resetHistory();
+    if (graph) void gcAttachments(graph);
+  };
+
+  /**
+   * 收走这张画布里已经没有主人的附件。
+   *
+   * 只在撤销历史刚被丢掉时调 —— 删节点是可撤销的，节点会以原来的 id 回来，
+   * 附件按 nodeId 挂着就自动接上了。可附件是二进制原件，删了不像节点那样
+   * 还躺在撤销栈里。历史没了，才轮得到清。
+   */
+  const gcAttachments = async (graph: Graph) => {
+    const live = new Set(Object.keys(graph.nodes));
+    const removed = await db.gcAttachments(graph.id, live);
+    if (removed) void get().refreshAttachments();
+  };
+
   /** 掐掉所有在跑的生成，并标记为作废——它们的结果不该写回还原后的状态 */
   const abandonRunning = () => {
-    for (const [id, controller] of controllers) {
+    for (const [id, task] of controllers) {
       abandoned.add(id);
-      controller.abort();
+      task.controller.abort();
     }
+  };
+
+  /**
+   * 掐掉某一张画布上的生成并作废。
+   *
+   * 画布要被删掉或整份换掉时必须先做这个：不掐的话它还会继续往 detached
+   * 里写、继续排队落盘，于是被删/被换掉的内容被它自己的生成一路写回来。
+   */
+  /**
+   * 拿到「此刻全部画布」的可信版本，用于导出和快照。
+   *
+   * 不能只 `saver.flush()` 然后从磁盘读：flush 里的写入是不等待的
+   * （`void saveGraph(...)`），读写谁先落地全靠 IndexedDB 恰好按事务创建
+   * 顺序串行 —— 在 saveGraph 里多加一个 await 就会静默错位，而错位的表现
+   * 是导出文件里少了用户眼前刚打的那句话。
+   *
+   * 内存里那份本来就是权威版本，直接盖上去，竞态就不存在了。
+   */
+  const currentGraphs = async (): Promise<Graph[]> => {
+    saver.flush();
+    const onDisk = await db.loadAllGraphs();
+    const live = new Map<string, Graph>(detached);
+    const active = get().graph;
+    if (active) live.set(active.id, active);
+    const merged = onDisk.map((g) => live.get(g.id) ?? g);
+    // 刚建出来还没落盘的画布，磁盘上根本没有，补进去
+    for (const [id, graph] of live) if (!onDisk.some((g) => g.id === id)) merged.push(graph);
+    return merged;
+  };
+
+  const abandonGraph = (graphId: string) => {
+    for (const [nodeId, task] of controllers) {
+      if (task.graphId !== graphId) continue;
+      abandoned.add(nodeId);
+      task.controller.abort();
+    }
+    detached.delete(graphId);
   };
 
   /** 撤销和重做只换 nodes，不动画布 id/标题，也不记新历史 */
@@ -396,6 +515,8 @@ export const useStore = create<State>((set, get) => {
     const target = graph?.nodes[assistantId];
     if (!graph || !target) return;
     if (controllers.has(assistantId)) return;
+    // 认准这张画布。中途切走了，结果也要写回这里，不能落到眼前那张上
+    const graphId = graph.id;
 
     const profile = profileFor(target.profileId);
     // 本地服务通常不设 Key，不该被这道拦截挡下来
@@ -490,7 +611,7 @@ export const useStore = create<State>((set, get) => {
     }
 
     const controller = new AbortController();
-    controllers.set(assistantId, controller);
+    controllers.set(assistantId, { controller, graphId });
 
     let content = '';
     let reasoning = '';
@@ -498,23 +619,20 @@ export const useStore = create<State>((set, get) => {
     let lastFlush = 0;
 
     const flush = (status: ChatNode['status'], error?: string) => {
-      commit(
-        (nodes) => {
-          const current = nodes[assistantId];
-          if (!current) return;
-          nodes[assistantId] = {
-            ...current,
-            content,
-            reasoning: reasoning || undefined,
-            usage,
-            status,
-            error,
-            updatedAt: now(),
-          };
-        },
-        // 每 33ms 一次，入历史会瞬间把栈冲爆；起点已经记过了
-        { history: false },
-      );
+      // commitTo 认 graphId：切走了就写进后台那份副本，不入历史（每 33ms 一次）
+      commitTo(graphId, (nodes) => {
+        const current = nodes[assistantId];
+        if (!current) return;
+        nodes[assistantId] = {
+          ...current,
+          content,
+          reasoning: reasoning || undefined,
+          usage,
+          status,
+          error,
+          updatedAt: now(),
+        };
+      });
       lastFlush = performance.now();
     };
 
@@ -541,6 +659,8 @@ export const useStore = create<State>((set, get) => {
       controllers.delete(assistantId);
       abandoned.delete(assistantId);
       saver.flush();
+      // 后台那张画布上最后一个生成结束了，就不用再挂着了
+      if (!hasRunning(graphId)) detached.delete(graphId);
     }
   };
 
@@ -587,6 +707,8 @@ export const useStore = create<State>((set, get) => {
       await db.saveLastGraphId(graph.id);
       set({ settings: merged, graph, graphs: await db.listGraphs(), ready: true });
       await afterGraphSwitch();
+      // 上一次会话里删掉的节点，撤销栈已经随页面一起没了，附件可以收了
+      void gcAttachments(graph);
     },
 
     async refreshGraphList() {
@@ -594,8 +716,7 @@ export const useStore = create<State>((set, get) => {
     },
 
     async newGraph() {
-      saver.flush();
-      resetHistory(); // 历史是会话状态，不跨画布
+      leaveCurrentGraph();
       const graph = emptyGraph();
       await db.saveGraph(graph);
       await db.saveLastGraphId(graph.id);
@@ -604,18 +725,30 @@ export const useStore = create<State>((set, get) => {
     },
 
     async openGraph(id) {
-      saver.flush();
-      const graph = await db.loadGraph(id);
+      /*
+       * 后台那份优先于磁盘那份。
+       *
+       * 切走时如果还有生成在跑，内存里的副本一直在被写，而磁盘落后一个
+       * 防抖周期 —— 从磁盘读就会把刚生成出来的几百个字盖掉。
+       */
+      const live = detached.get(id);
+      const graph = live ?? (await db.loadGraph(id));
       if (!graph) return;
-      resetHistory();
+      leaveCurrentGraph();
       await db.saveLastGraphId(id);
-      set({ graph: sanitize(graph), selectedId: null });
+      /*
+       * 后台那份不能过 sanitize：它把 streaming 洗成 idle，是为了收拾
+       * 「流式输出中途关了页面」留下的残状态。可这里的 streaming 是真在跑，
+       * 洗掉就成了「转圈突然停了、下一次 flush 又转起来」。
+       */
+      set({ graph: live ?? sanitize(graph), selectedId: null });
       await afterGraphSwitch();
     },
 
     async removeGraph(id) {
       // 删之前留一个回滚点
       await get().takeSnapshot('删除画布前');
+      abandonGraph(id); // 画布都要删了，上面在跑的生成必须先掐掉并作废
       // 必须先丢弃待写入：防抖存盘里可能还压着这个画布，删完定时器一到
       // 又会把它写回去，用户看到的就是「删了又自己回来了」
       saver.discard(id);
@@ -718,7 +851,7 @@ export const useStore = create<State>((set, get) => {
       const graph = get().graph;
       if (!graph) return 0;
       const doomed = cascade ? collectDescendants(graph.nodes, id) : new Set([id]);
-      for (const victim of doomed) controllers.get(victim)?.abort();
+      for (const victim of doomed) controllers.get(victim)?.controller.abort();
 
       commit(
         (nodes) => {
@@ -814,8 +947,53 @@ export const useStore = create<State>((set, get) => {
     },
 
     async exportEverything(includeKeys) {
-      saver.flush(); // 否则导出的是磁盘上的旧版本
-      return buildFullBackup(get().settings, await db.loadAllGraphs(), includeKeys);
+      return buildFullBackup(get().settings, await currentGraphs(), includeKeys);
+    },
+
+    async exportArchive(includeKeys) {
+      const [graphs, attachments, knowledgeFiles, knowledgeChunks] = await Promise.all([
+        currentGraphs(),
+        db.loadAllAttachments(),
+        db.loadAllKnowledgeFiles(),
+        db.loadAllKnowledgeChunks(),
+      ]);
+      return buildArchive(
+        { settings: get().settings, graphs, attachments, knowledgeFiles, knowledgeChunks },
+        includeKeys,
+      );
+    },
+
+    async restoreArchive(parsed) {
+      await get().takeSnapshot('导入前');
+      // 所有画布都要被换掉，在跑的生成一律作废，否则它们会往新数据上写
+      abandonRunning();
+      detached.clear();
+      saver.flush();
+
+      const { payload } = parsed;
+      await db.replaceAllGraphs(payload.graphs);
+      await db.replaceAttachmentsAndKnowledge(
+        payload.attachments,
+        payload.knowledgeFiles,
+        payload.knowledgeChunks,
+      );
+      await db.saveSettings(payload.settings);
+      resetHistory();
+      invalidateChunks();
+      dataUrlCache.clear();
+
+      const first = payload.graphs[0];
+      if (first) await db.saveLastGraphId(first.id);
+
+      set({
+        settings: payload.settings,
+        graph: first ? sanitize(first) : emptyGraph(),
+        selectedId: null,
+        graphs: await db.listGraphs(),
+        snapshots: await db.listSnapshots(),
+      });
+      await afterGraphSwitch();
+      return countPayload(payload);
     },
 
     importSettings(backup) {
@@ -857,9 +1035,8 @@ export const useStore = create<State>((set, get) => {
     },
 
     async takeSnapshot(reason = '自动') {
-      // 落盘当前画布，否则快照里存的是磁盘上的旧版本
-      saver.flush();
-      const [graphs, latestList] = await Promise.all([db.loadAllGraphs(), db.listSnapshots()]);
+      // 内存里那份才是用户眼前的版本，磁盘上的可能落后一个防抖周期
+      const [graphs, latestList] = await Promise.all([currentGraphs(), db.listSnapshots()]);
       const settings = get().settings;
       const signature = buildSignature(graphs, settings);
 
@@ -898,6 +1075,11 @@ export const useStore = create<State>((set, get) => {
       // 回滚也是破坏性的：先给当前状态留一个回头路
       await get().takeSnapshot('恢复前');
 
+      // 所有画布都要被换掉，后台还在跑的生成一律作废 —— 否则它们会把
+      // 刚刚被替换掉的内容一路写回来，回滚就白做了
+      abandonRunning();
+      detached.clear();
+
       saver.flush();
       await db.replaceAllGraphs(snapshot.graphs);
       await db.saveSettings(snapshot.settings);
@@ -923,6 +1105,7 @@ export const useStore = create<State>((set, get) => {
       if (!target) return false;
 
       await get().takeSnapshot('恢复前');
+      abandonGraph(graphId); // 这一张要被整份换掉，它上面在跑的生成同样得作废
       saver.flush();
       await db.saveGraph(target);
       await db.saveLastGraphId(target.id);
@@ -1221,7 +1404,7 @@ export const useStore = create<State>((set, get) => {
     },
 
     stop(nodeId) {
-      controllers.get(nodeId)?.abort();
+      controllers.get(nodeId)?.controller.abort();
     },
 
     updateSettings(patch) {

@@ -5,6 +5,8 @@ import { MODE_ICON, MODE_LABEL, type ThemeMode } from '../lib/theme';
 import { VIEW_HINT, VIEW_LABEL, VIEW_ORDER } from '../lib/view';
 import { toast } from '../lib/toast';
 import { parseBackup } from '../lib/backup';
+import { looksLikeArchive, readArchive } from '../lib/archive';
+import { formatBytes } from '../lib/attachments';
 import { downloadJson } from '../lib/download';
 
 export function Toolbar({
@@ -33,6 +35,7 @@ export function Toolbar({
   const applyLayout = useStore((s) => s.applyLayout);
   const importSettings = useStore((s) => s.importSettings);
   const restoreBackup = useStore((s) => s.restoreBackup);
+  const restoreArchive = useStore((s) => s.restoreArchive);
   const viewMode = useStore((s) => s.viewMode);
   const setViewMode = useStore((s) => s.setViewMode);
   const { getNodes, fitView } = useReactFlow();
@@ -53,10 +56,46 @@ export function Toolbar({
     downloadJson(graph, `${graph.title || 'canvas'}.json`);
   };
 
-  /** 一个入口认三种文件：单画布、设置备份、完整备份。认不出就说清楚，不硬塞 */
+  /**
+   * 恢复 .nexus.zip。
+   *
+   * 确认框里报的是**包里实际有什么**，不是「即将替换全部数据」这种笼统说法 ——
+   * 恢复备份是不可逆的（虽然有快照兜底），人得先看清自己要拿什么换掉什么。
+   */
+  const importArchiveFile = async (file: File) => {
+    const parsed = await readArchive(new Uint8Array(await file.arrayBuffer()));
+    const c = parsed.manifest.counts;
+    const warn = parsed.mismatches.length
+      ? `\n\n⚠️ 备份包对不上账，可能不完整：\n${parsed.mismatches.join('\n')}`
+      : '';
+    if (
+      !confirm(
+        `恢复这个备份会替换当前全部数据。\n\n` +
+          `包里有：${c.graphs} 个画布 · ${c.nodes} 个节点 · ` +
+          `${c.attachments} 个附件（${formatBytes(c.attachmentBytes)}）· ` +
+          `${c.knowledgeFiles} 份知识库资料\n` +
+          `导出于 ${new Date(parsed.manifest.exportedAt).toLocaleString('zh-CN')}` +
+          `${parsed.manifest.keysIncluded ? '\n（含明文 API Key）' : ''}` +
+          `${warn}\n\n恢复前会自动存一份快照，可以回滚。继续？`,
+      )
+    ) {
+      return;
+    }
+    const restored = await restoreArchive(parsed);
+    toast(
+      `已恢复 ${restored.graphs} 个画布 · ${restored.attachments} 个附件 · ` +
+        `${restored.knowledgeFiles} 份资料 · 恢复前的状态存进快照了`,
+    );
+  };
+
+  /** 一个入口认四种文件：完整备份包、单画布、设置备份、旧版完整备份。认不出就说清楚，不硬塞 */
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     try {
+      if (looksLikeArchive(file)) {
+        await importArchiveFile(file);
+        return;
+      }
       const parsed = parseBackup(JSON.parse(await file.text()));
 
       if (parsed.type === 'graph') {
@@ -221,7 +260,7 @@ export function Toolbar({
         <input
           ref={fileRef}
           type="file"
-          accept="application/json,.json"
+          accept="application/json,.json,application/zip,.zip"
           hidden
           onChange={(e) => void onFile(e.target.files?.[0])}
         />

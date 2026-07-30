@@ -11,6 +11,8 @@
 import http from 'node:http';
 
 const PORT = 8787;
+/** 每片之间的间隔。调大用来手动验证「生成到一半切画布/删画布」这类竞态 */
+const DELAY = Number(process.env.MOCK_DELAY_MS ?? 12);
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -58,11 +60,12 @@ http
     // 先吐一段 reasoning，顺便验证 reasoning_content 有没有被正确分流
     send({ choices: [{ delta: { reasoning_content: `模型 ${body.model} 正在思考…` } }] });
 
-    // 按片发送，逼近真实的流式体验
+    // 按片发送，逼近真实的流式体验。
+    // MOCK_DELAY_MS 调慢是为了能手动验证「生成到一半切画布」这类竞态。
     const step = 7;
     for (let i = 0; i < reply.length; i += step) {
       send({ choices: [{ delta: { content: reply.slice(i, i + step) } }] });
-      await new Promise((r) => setTimeout(r, 12));
+      await new Promise((r) => setTimeout(r, DELAY));
     }
 
     send({

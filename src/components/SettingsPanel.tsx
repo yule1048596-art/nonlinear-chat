@@ -4,7 +4,8 @@ import { LlmError, PRESETS, listModels, streamChat } from '../lib/llm';
 import { DEFAULT_EMBEDDING, EmbeddingError, embedOne } from '../lib/embeddings';
 import { isLocalUrl, usesLoopbackIp } from '../lib/endpoint';
 import { backupFilename } from '../lib/backup';
-import { downloadJson } from '../lib/download';
+import { downloadBlob, downloadJson } from '../lib/download';
+import { archiveFilename } from '../lib/archive';
 import { toast } from '../lib/toast';
 import type { EmbeddingSettings, Profile } from '../types';
 
@@ -52,6 +53,7 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
   const removeProfile = useStore((s) => s.removeProfile);
   const exportSettings = useStore((s) => s.exportSettings);
   const exportEverything = useStore((s) => s.exportEverything);
+  const exportArchive = useStore((s) => s.exportArchive);
 
   const [tab, setTab] = useState<TabId>('model');
   const [editingId, setEditingId] = useState(settings.activeProfileId);
@@ -60,6 +62,8 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
   const [busy, setBusy] = useState<'models' | 'test' | null>(null);
   // 默认不含 Key：导出文件最常见的用途是分享配置模板和换设备，带明文 Key 太容易泄漏
   const [includeKeys, setIncludeKeys] = useState(false);
+  // 打包大备份可能要几秒（附件要逐个读成字节），按钮得有个在忙的样子
+  const [packing, setPacking] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [testingEmbed, setTestingEmbed] = useState(false);
   const [embedResult, setEmbedResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -526,24 +530,56 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
                   </button>
                   <button
                     className="btn solid grow"
+                    disabled={packing}
+                    onClick={async () => {
+                      setPacking(true);
+                      try {
+                        const { blob, manifest } = await exportArchive(includeKeys);
+                        downloadBlob(blob, archiveFilename());
+                        const c = manifest.counts;
+                        toast(
+                          `已打包 ${c.graphs} 个画布 · ${c.attachments} 个附件 · ${c.knowledgeFiles} 份资料`,
+                        );
+                      } catch (err) {
+                        toast(`打包失败：${(err as Error).message}`);
+                      } finally {
+                        setPacking(false);
+                      }
+                    }}
+                  >
+                    {packing ? '打包中…' : '导出全部'}
+                  </button>
+                </div>
+                <p className="hint">
+                  「导出全部」打的是 <code>.nexus.zip</code>：画布、设置、
+                  <b>附件原件、知识库资料与向量</b> 都在里面，换台电脑导入就是完整的一套。
+                  <br />
+                  旧版导出的 <code>.json</code> 只有画布和设置 —— 附件和知识库不在其中，
+                  用它恢复的话，节点上的图片会指向不存在的文件。那种文件仍然能导入。
+                </p>
+                <details className="hint-fold">
+                  <summary>只要画布和设置的 JSON</summary>
+                  <button
+                    className="btn"
                     onClick={async () => {
                       const backup = await exportEverything(includeKeys);
                       downloadJson(backup, backupFilename('nexus-backup'));
-                      toast(`已导出 ${backup.graphs.length} 个画布和设置`);
+                      toast(`已导出 ${backup.graphs.length} 个画布和设置（不含附件与知识库）`);
                     }}
                   >
-                    导出全部
+                    导出画布与设置（JSON）
                   </button>
-                </div>
+                </details>
               </section>
 
               <section>
                 <h3>导入</h3>
                 <p className="hint">
-                  走顶栏的 ↑ 按钮，它认得三种文件：单个画布、设置、完整备份。
+                  走顶栏的 ↑ 按钮，它认得四种文件：完整备份包 <code>.nexus.zip</code>、单个画布、
+                  设置、旧版完整备份 JSON。
                   <br />
                   导入设置<b>只会并入没有的模型配置</b>，不覆盖你已有的；要整体替换请用完整备份，
-                  那条路径会先自动存一份快照。
+                  那条路径会先自动存一份快照，并且会先报出包里到底有多少东西。
                 </p>
               </section>
 
@@ -552,7 +588,8 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
                 <p className="hint">
                   API Key、画布内容、知识库全部只存在这台电脑的浏览器 IndexedDB 里，
                   不经过任何第三方服务器 —— 请求是浏览器直连模型厂商的，用本机模型时连网都不出。
-                  清浏览器数据会一起清掉，重要画布记得用「导出」备份。
+                  清浏览器数据会一起清掉，重要的东西记得用上面的「导出全部」打成{' '}
+                  <code>.nexus.zip</code> 放在浏览器外面。
                 </p>
               </section>
             </>

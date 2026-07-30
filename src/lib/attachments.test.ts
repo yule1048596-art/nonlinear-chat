@@ -6,6 +6,7 @@ import {
   detectAttachmentKind,
   formatBytes,
   MAX_TEXT_CHARS,
+  orphanAttachmentIds,
   type ResolvedAttachment,
 } from './attachments';
 
@@ -175,5 +176,45 @@ describe('formatBytes', () => {
     expect(formatBytes(512)).toBe('512 B');
     expect(formatBytes(2048)).toBe('2 KB');
     expect(formatBytes(3 * 1024 * 1024)).toBe('3.0 MB');
+  });
+});
+
+describe('orphanAttachmentIds', () => {
+  const att = (id: string, nodeId: string) => ({ id, nodeId });
+
+  it('节点还在的一个都不动', () => {
+    const live = new Set(['n1', 'n2']);
+    expect(orphanAttachmentIds([att('a', 'n1'), att('b', 'n2')], live)).toEqual([]);
+  });
+
+  it('挑出节点已经不存在的', () => {
+    const live = new Set(['n1']);
+    expect(orphanAttachmentIds([att('a', 'n1'), att('b', 'gone'), att('c', 'gone')], live)).toEqual([
+      'b',
+      'c',
+    ]);
+  });
+
+  it('同一个节点上的多个附件一起挑出来', () => {
+    expect(orphanAttachmentIds([att('a', 'x'), att('b', 'x')], new Set())).toEqual(['a', 'b']);
+  });
+
+  it('没有附件时返回空', () => {
+    expect(orphanAttachmentIds([], new Set(['n1']))).toEqual([]);
+  });
+
+  /*
+   * 这是整件事的关键约束，不是边界情况。
+   *
+   * 删节点可撤销，⌘Z 之后节点以原来的 id 回来，附件按 nodeId 挂着就自动接上。
+   * 所以只要节点 id 还在 live 里，附件就不能动 —— 哪怕它此刻看着像没人用。
+   */
+  it('撤销把节点带回来之后，附件必须还能接上', () => {
+    const attachments = [att('shot', 'n9')];
+    // 删掉 n9 的那一刻：历史还在，不该 GC，所以此时根本不会调这个函数。
+    // 真正调它是在历史被丢弃之后 —— 那时 n9 若已恢复，就仍在 live 里
+    expect(orphanAttachmentIds(attachments, new Set(['n9']))).toEqual([]);
+    // 而它确实没回来时，才算孤儿
+    expect(orphanAttachmentIds(attachments, new Set(['n1']))).toEqual(['shot']);
   });
 });

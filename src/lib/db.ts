@@ -1,6 +1,7 @@
 import { openDB, type IDBPDatabase } from 'idb';
 import type { Attachment, Graph, GraphMeta, KnowledgeChunk, KnowledgeFile, Settings } from '../types';
 import { toMeta, type Snapshot, type SnapshotMeta } from './snapshots';
+import { orphanAttachmentIds } from './attachments';
 
 const DB_NAME = 'nonlinear-chat';
 /** v2 加 snapshots，v3 加知识库两张表，v4 加附件表。升级只新建表，不动既有数据 */
@@ -182,12 +183,17 @@ export async function deleteAttachment(id: string): Promise<void> {
   await (await db()).delete(ATTACHMENTS, id);
 }
 
-/** 删节点时连带删它的附件 */
-export async function deleteAttachmentsForNode(nodeId: string): Promise<void> {
+/**
+ * 清掉一张画布里没有主人的附件，返回删了几个。
+ * 挑谁是孤儿的逻辑在 `orphanAttachmentIds`，那里说明了为什么不能删节点时就删。
+ */
+export async function gcAttachments(graphId: string, liveNodeIds: Set<string>): Promise<number> {
   const database = await db();
   const tx = database.transaction(ATTACHMENTS, 'readwrite');
-  for (const key of await tx.store.index('nodeId').getAllKeys(nodeId)) void tx.store.delete(key);
+  const orphans = orphanAttachmentIds(await tx.store.index('graphId').getAll(graphId), liveNodeIds);
+  for (const id of orphans) void tx.store.delete(id);
   await tx.done;
+  return orphans.length;
 }
 
 export async function deleteAttachmentsForGraph(graphId: string): Promise<void> {
@@ -206,6 +212,44 @@ export async function replaceAllGraphs(graphs: Graph[]): Promise<void> {
   await tx.done;
 }
 
+/* ---------- 完整备份用的全库读写 ---------- */
+
+export async function loadAllAttachments(): Promise<Attachment[]> {
+  return (await db()).getAll(ATTACHMENTS);
+}
+
+export async function loadAllKnowledgeFiles(): Promise<KnowledgeFile[]> {
+  return (await db()).getAll(KNOWLEDGE_FILES);
+}
+
+export async function loadAllKnowledgeChunks(): Promise<KnowledgeChunk[]> {
+  return (await db()).getAll(KNOWLEDGE_CHUNKS);
+}
+
+/**
+ * 整份替换附件与知识库，用于恢复完整备份。
+ *
+ * 三张表放在**同一个事务**里：清空和写入必须一起成功。分开做的话，中途
+ * 失败会留下「画布还在、附件已清空」这种状态 —— 而恢复备份本来就是
+ * 用户手里没别的副本了才会做的事。
+ */
+export async function replaceAttachmentsAndKnowledge(
+  attachments: Attachment[],
+  files: KnowledgeFile[],
+  chunks: KnowledgeChunk[],
+): Promise<void> {
+  const database = await db();
+  const tx = database.transaction([ATTACHMENTS, KNOWLEDGE_FILES, KNOWLEDGE_CHUNKS], 'readwrite');
+  const attStore = tx.objectStore(ATTACHMENTS);
+  const fileStore = tx.objectStore(KNOWLEDGE_FILES);
+  const chunkStore = tx.objectStore(KNOWLEDGE_CHUNKS);
+  await Promise.all([attStore.clear(), fileStore.clear(), chunkStore.clear()]);
+  for (const a of attachments) void attStore.put(a);
+  for (const f of files) void fileStore.put(f);
+  for (const c of chunks) void chunkStore.put(c);
+  await tx.done;
+}
+
 export async function loadAllGraphs(): Promise<Graph[]> {
   return (await db()).getAll(GRAPHS);
 }
@@ -221,6 +265,11 @@ export interface DebouncedSaver {
  * 带 maxWait 的防抖：流式输出时 token 一直在来，纯防抖会永远不落盘，
  * 所以最多攒 maxWait 毫秒就强制存一次。
  *
+ * **待写入按画布 id 分槽。** 从前只有一个 pending 槽，够用是因为「同时只写
+ * 一个画布」这个假设成立；等到生成任务能在切走画布后继续写回原画布，
+ * 两个画布就会交替排队，后一个直接把前一个顶掉 —— 丢的是已经生成出来的
+ * 回答，而且悄无声息。
+ *
  * write 可注入纯粹是为了能单测——防抖时序出错会静默丢数据或复活已删数据，
  * 是必须测得动的那类逻辑。
  */
@@ -231,7 +280,7 @@ export function createDebouncedSaver(
 ): DebouncedSaver {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let firstQueuedAt = 0;
-  let pending: Graph | null = null;
+  const pending = new Map<string, Graph>();
 
   const cancelTimer = () => {
     if (timer) {
@@ -243,16 +292,15 @@ export function createDebouncedSaver(
 
   const flush = () => {
     cancelTimer();
-    if (pending) {
-      const graph = pending;
-      pending = null;
-      write(graph);
-    }
+    if (!pending.size) return;
+    const graphs = [...pending.values()];
+    pending.clear();
+    for (const graph of graphs) write(graph);
   };
 
   return {
     queue(graph: Graph) {
-      pending = graph;
+      pending.set(graph.id, graph);
       const now = Date.now();
       if (!firstQueuedAt) firstQueuedAt = now;
       if (now - firstQueuedAt >= maxWait) {
@@ -264,9 +312,9 @@ export function createDebouncedSaver(
     },
     flush,
     discard(graphId) {
-      if (pending?.id !== graphId) return;
-      pending = null;
-      cancelTimer();
+      if (!pending.delete(graphId)) return;
+      // 还有别的画布等着写就别把定时器一起掐了
+      if (!pending.size) cancelTimer();
     },
   };
 }

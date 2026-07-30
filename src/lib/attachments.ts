@@ -91,6 +91,23 @@ export function countImages(content: string | ContentPart[]): number {
   return content.filter((p) => p.type === 'image_url').length;
 }
 
+/**
+ * 挑出没有主人的附件。
+ *
+ * **删节点的那一刻不能挑。** 删节点是可撤销的，⌘Z 之后节点以原来的 id 回来，
+ * 附件按 nodeId 挂着就自动接上了 —— 前提是那会儿它还在。节点删了还躺在
+ * 撤销栈里，附件是二进制原件，删了就真没了。
+ *
+ * 所以调用时机是**撤销历史刚被丢弃**：切画布、新建画布、启动。
+ * 那之后再没有什么能把节点变回来，剩下的孤儿才是真孤儿。
+ */
+export function orphanAttachmentIds(
+  attachments: { id: string; nodeId: string }[],
+  liveNodeIds: Set<string>,
+): string[] {
+  return attachments.filter((a) => !liveNodeIds.has(a.nodeId)).map((a) => a.id);
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;

@@ -24,7 +24,27 @@ const settings = (profiles = [profile()]): Settings => ({
   activeProfileId: profiles[0]?.id ?? '',
   systemPrompt: '设定',
   contextLimit: 0,
+  embedding: {
+    baseUrl: 'https://api.jina.ai/v1',
+    apiKey: 'jina-secret',
+    model: 'jina-embeddings-v3',
+    topK: 4,
+  },
 });
+
+/**
+ * 把对象里所有叫 apiKey 的字段挖出来，不管埋多深。
+ *
+ * 逐个字段写断言防不住「以后又加了一处存 Key 的地方」——
+ * 向量服务的 Key 就是这么漏的。这个遍历才是真正的护栏。
+ */
+function allApiKeys(value: unknown, path = '$'): { path: string; value: unknown }[] {
+  if (Array.isArray(value)) return value.flatMap((v, i) => allApiKeys(v, `${path}[${i}]`));
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) =>
+    k === 'apiKey' ? [{ path: `${path}.${k}`, value: v }] : allApiKeys(v, `${path}.${k}`),
+  );
+}
 
 const graph = (id: string): Graph => ({
   id,
@@ -49,6 +69,41 @@ describe('stripKeys', () => {
     const original = settings();
     stripKeys(original);
     expect(original.profiles[0]!.apiKey).toBe('sk-secret');
+    expect(original.embedding!.apiKey).toBe('jina-secret');
+  });
+
+  /** 界面上写的是「不含 Key」，漏一处就是把承诺变成谎话 */
+  it('向量服务的 Key 也要清掉', () => {
+    expect(stripKeys(settings()).embedding!.apiKey).toBe('');
+  });
+
+  it('没配向量服务时不要凭空造一个出来', () => {
+    const { embedding: _drop, ...withoutEmbedding } = settings();
+    expect(stripKeys(withoutEmbedding as Settings).embedding).toBeUndefined();
+  });
+
+  it('设置里任何一处 apiKey 都不剩', () => {
+    const left = allApiKeys(stripKeys(settings())).filter((k) => k.value !== '');
+    expect(left, `还留着 Key：${left.map((k) => k.path).join(', ')}`).toEqual([]);
+  });
+});
+
+/** 真正要守住的是导出文件本身：不管 stripKeys 怎么改，落到磁盘的不能有 Key */
+describe('导出文件里不能有明文 Key', () => {
+  it('设置备份（includeKeys=false）', () => {
+    const left = allApiKeys(buildSettingsBackup(settings(), false)).filter((k) => k.value !== '');
+    expect(left, `还留着 Key：${left.map((k) => k.path).join(', ')}`).toEqual([]);
+  });
+
+  it('全量备份（includeKeys=false）', () => {
+    const b = buildFullBackup(settings(), [graph('g1')], false);
+    const left = allApiKeys(b).filter((k) => k.value !== '');
+    expect(left, `还留着 Key：${left.map((k) => k.path).join(', ')}`).toEqual([]);
+  });
+
+  it('显式要求带 Key 时一个都不能少', () => {
+    const b = buildFullBackup(settings(), [graph('g1')], true);
+    expect(allApiKeys(b).map((k) => k.value).sort()).toEqual(['jina-secret', 'sk-secret']);
   });
 });
 

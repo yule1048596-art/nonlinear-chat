@@ -94,4 +94,63 @@ describe('createDebouncedSaver', () => {
     expect(write).toHaveBeenCalledTimes(1);
     expect(write.mock.calls[0]![0].id).toBe('fresh');
   });
+
+  /*
+   * 待写入必须按画布分槽。
+   *
+   * 从前只有一个 pending 槽，够用是因为「同时只写一个画布」；等到生成任务
+   * 能在切走画布后继续写回原画布，两个画布就会交替排队，后一个把前一个顶掉，
+   * 丢的是已经生成出来的回答。
+   */
+  it('两个画布交替排队时都要写到，谁也别顶掉谁', () => {
+    const write = vi.fn();
+    const saver = createDebouncedSaver(600, 3000, write);
+
+    saver.queue(graph('bg', '后台还在生成的'));
+    saver.queue(graph('fg', '眼前这个'));
+    saver.queue(graph('bg', '后台又吐了几个字'));
+
+    vi.advanceTimersByTime(600);
+    const written = Object.fromEntries(write.mock.calls.map(([g]) => [g.id, g.title]));
+    expect(written).toEqual({ bg: '后台又吐了几个字', fg: '眼前这个' });
+  });
+
+  it('同一个画布连续排队仍然只写最后一版', () => {
+    const write = vi.fn();
+    const saver = createDebouncedSaver(600, 3000, write);
+
+    saver.queue(graph('g', '第一版'));
+    saver.queue(graph('g', '第二版'));
+    saver.queue(graph('g', '第三版'));
+
+    vi.advanceTimersByTime(600);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write.mock.calls[0]![0].title).toBe('第三版');
+  });
+
+  it('丢弃其中一个画布，另一个照写不误', () => {
+    const write = vi.fn();
+    const saver = createDebouncedSaver(600, 3000, write);
+
+    saver.queue(graph('doomed'));
+    saver.queue(graph('keep'));
+    saver.discard('doomed');
+
+    vi.advanceTimersByTime(600);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write.mock.calls[0]![0].id).toBe('keep');
+  });
+
+  it('flush 把所有画布一次性写完', () => {
+    const write = vi.fn();
+    const saver = createDebouncedSaver(600, 3000, write);
+
+    saver.queue(graph('a'));
+    saver.queue(graph('b'));
+    saver.flush();
+    expect(write.mock.calls.map(([g]) => g.id).sort()).toEqual(['a', 'b']);
+
+    saver.flush();
+    expect(write).toHaveBeenCalledTimes(2); // 已经清空，不重复写
+  });
 });
