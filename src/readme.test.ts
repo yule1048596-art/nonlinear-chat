@@ -47,7 +47,7 @@ describe('README 别撒谎', () => {
    */
   it('「还没做」里不能列着已经做完的东西', () => {
     const section = README.split('## 还没做')[1] ?? '';
-    for (const done of ['图片', '附件', '完整备份', '知识库检索']) {
+    for (const done of ['图片', '附件', '完整备份', '知识库检索', '端到端']) {
       expect(section, `「${done}」已经做完了，不该还挂在「还没做」里`).not.toContain(done);
     }
   });

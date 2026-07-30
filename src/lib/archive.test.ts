@@ -246,14 +246,27 @@ describe('compareCounts', () => {
 });
 
 describe('looksLikeArchive', () => {
-  it('认得出备份包', () => {
-    expect(looksLikeArchive({ name: 'nexus-20260729-1930.nexus.zip' })).toBe(true);
-    expect(looksLikeArchive({ name: '随便什么.ZIP' })).toBe(true);
+  it('认得出真的备份包', async () => {
+    const { blob } = await buildArchive(payload(), false);
+    expect(looksLikeArchive(await toBytes(blob))).toBe(true);
+  });
+
+  /*
+   * 认字节不认文件名：改过名、或者下载时后缀被吞掉的备份仍然认得出来。
+   * 备份恢复通常是最后一根救命稻草，不该败在文件名上。
+   */
+  it('文件名无关，只看头四个字节', () => {
+    expect(looksLikeArchive(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0]))).toBe(true);
   });
 
   it('JSON 走旧那条路', () => {
-    expect(looksLikeArchive({ name: 'nexus-backup.json' })).toBe(false);
-    expect(looksLikeArchive({ name: '画布.json' })).toBe(false);
+    const json = new TextEncoder().encode('{"kind":"nexus-backup"}');
+    expect(looksLikeArchive(json)).toBe(false);
+  });
+
+  it('太短的内容不会误判', () => {
+    expect(looksLikeArchive(new Uint8Array([0x50, 0x4b]))).toBe(false);
+    expect(looksLikeArchive(new Uint8Array(0))).toBe(false);
   });
 });
 

@@ -255,9 +255,17 @@ src/
 npm test
 ```
 
-380 tests covering DAG topological ordering, multi-parent merging, diamond deduplication, cycle detection, context trimming, collapse-visibility propagation, undo-stack coalescing and limits, token estimation, search-excerpt offsets, debounced-save timing (including per-canvas slots), SSE stream parsing, snapshot dedup and pruning, backup merging, export key-stripping, archive pack/restore round-trips, attachment orphan detection, the demo canvas's graph shape, and path export.
+382 tests covering DAG topological ordering, multi-parent merging, diamond deduplication, cycle detection, context trimming, collapse-visibility propagation, undo-stack coalescing and limits, token estimation, search-excerpt offsets, debounced-save timing (including per-canvas slots), SSE stream parsing, snapshot dedup and pruning, backup merging, export key-stripping, archive pack/restore round-trips, attachment orphan detection, the demo canvas's graph shape, and path export.
 
 [`src/readme.test.ts`](src/readme.test.ts) watches the docs themselves: the test count and the "not done yet" list turn red the moment they drift from the code. A hand-synced number will always drift, so rather than re-checking it periodically, let it shout.
+
+There are also 15 [Playwright end-to-end tests](e2e/) driving a real browser against the mock server in this repo:
+
+```bash
+npm run test:e2e        # add :ui to step through them
+```
+
+They cover exactly what unit tests cannot: the request body for a first send and for multi-parent merging, stop / regenerate / side-by-side, the focus view's anchor choice, an attachment from upload to request body, switching and deleting canvases mid-stream, and a full backup round-trip. Each of those spans the store, the debounced saver and React's lifecycle, so no amount of pure-logic testing reaches them. The first run after adding them caught a real bug: the previous release turned the node action bar into an overlay, and it covered the one-line textarea of a question node — hovering made it impossible to click in and type.
 
 To debug without spending real API credits, use the fake server in the repo:
 
@@ -319,4 +327,3 @@ notice; the software comes with no warranty.
 - **Internationalising the UI itself** — the interface is Chinese-only so far
 - Mobile layout (the toolbar and bottom bar overflow at 390px; there are no width breakpoints yet)
 - Accessibility: several buttons expose only a symbol like `◉` or `✕` as their name, and the mini graph is mouse-only
-- End-to-end tests (everything is unit-level today; cross-component flows are verified by hand)

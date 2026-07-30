@@ -11,8 +11,20 @@
 import http from 'node:http';
 
 const PORT = 8787;
-/** 每片之间的间隔。调大用来手动验证「生成到一半切画布/删画布」这类竞态 */
+/** 默认间隔。MOCK_DELAY_MS 只是给手动调试用的全局兜底 */
 const DELAY = Number(process.env.MOCK_DELAY_MS ?? 12);
+
+/**
+ * 出片速度由**模型名**决定。
+ *
+ * 「停止」「流式期间切画布」这类竞态要有一个稳定的时间窗才测得动：太快
+ * 还没来得及操作就跑完了，太慢每条用例都在干等。而端到端测试里唯一能
+ * 逐节点指定的旋钮就是模型名 —— 它本来就在节点上，不必再加一层配置。
+ *
+ * `mock-fast` 用于「只关心结果」的用例，`mock-slow` 用于要在流式中途下手的。
+ */
+const MODEL_DELAY = { 'mock-fast': 0, 'mock-slow': 200, 'mock-smart': DELAY };
+const delayFor = (model) => MODEL_DELAY[model] ?? DELAY;
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -26,7 +38,9 @@ http
 
     if (req.url.endsWith('/models')) {
       res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ data: [{ id: 'mock-fast' }, { id: 'mock-smart' }] }));
+      return res.end(
+        JSON.stringify({ data: Object.keys(MODEL_DELAY).map((id) => ({ id })) }),
+      );
     }
 
     if (!req.url.endsWith('/chat/completions')) {
@@ -60,12 +74,14 @@ http
     // 先吐一段 reasoning，顺便验证 reasoning_content 有没有被正确分流
     send({ choices: [{ delta: { reasoning_content: `模型 ${body.model} 正在思考…` } }] });
 
-    // 按片发送，逼近真实的流式体验。
-    // MOCK_DELAY_MS 调慢是为了能手动验证「生成到一半切画布」这类竞态。
+    // 按片发送，逼近真实的流式体验。速度看模型名，见 MODEL_DELAY
+    const gap = delayFor(body.model);
     const step = 7;
     for (let i = 0; i < reply.length; i += step) {
+      // 客户端可能中途 abort，连接断了就别再往里写
+      if (res.writableEnded || res.destroyed) return;
       send({ choices: [{ delta: { content: reply.slice(i, i + step) } }] });
-      await new Promise((r) => setTimeout(r, DELAY));
+      if (gap) await new Promise((r) => setTimeout(r, gap));
     }
 
     send({

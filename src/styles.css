@@ -845,16 +845,24 @@ body.is-connecting .react-flow__node {
    * 但代价在短卡片上大得离谱：一个「你」卡片总高 102px，其中 35px 是
    * 一条看不见的按钮带，三分之一的面积是空的，一屏问句看过去全是虚胖。
    *
-   * 浮起来两头都占：高度从此和悬停无关（边不会抖），短卡片也不再虚胖。
-   * 压在正文最后一行上时，靠底下那层渐变把字垫住。
+   * 所以浮起来 —— 但要浮到**卡片外面**去。
+   *
+   * 上一版是浮在卡片内部底端，结果压住了提问节点的输入框：那个 textarea
+   * 只有一行高，操作条一显出来就把它整个盖掉，鼠标一移上去就点不进去打字了。
+   * （这条是 e2e 第一次跑就抓到的，正是加它的理由。）
+   *
+   * 浮在卡片下方 10px：让开 8px 的连接点，不压任何正文，卡片高度也和悬停
+   * 彻底无关（边不会抖）。
    */
   position: absolute;
   left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 8px 8px 5px;
-  border-radius: 0 0 var(--radius) 0;
-  background: linear-gradient(to top, var(--surface) 68%, transparent);
+  top: calc(100% + 10px);
+  width: fit-content;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-2);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.16s var(--ease);
@@ -867,6 +875,15 @@ body.is-connecting .react-flow__node {
 .node:focus-within .node-actions {
   opacity: 1;
   pointer-events: auto;
+}
+
+/*
+ * 操作条浮在卡片外面，得保证它不被下一个节点盖住 —— React Flow 给每个
+ * 节点容器排了 z-index，默认按顺序来，正下方那个多半在上面。
+ */
+.react-flow__node:hover,
+.react-flow__node:focus-within {
+  z-index: 12 !important;
 }
 
 .node-actions .btn {

@@ -62,8 +62,8 @@ export function Toolbar({
    * 确认框里报的是**包里实际有什么**，不是「即将替换全部数据」这种笼统说法 ——
    * 恢复备份是不可逆的（虽然有快照兜底），人得先看清自己要拿什么换掉什么。
    */
-  const importArchiveFile = async (file: File) => {
-    const parsed = await readArchive(new Uint8Array(await file.arrayBuffer()));
+  const importArchiveFile = async (bytes: Uint8Array) => {
+    const parsed = await readArchive(bytes);
     const c = parsed.manifest.counts;
     const warn = parsed.mismatches.length
       ? `\n\n⚠️ 备份包对不上账，可能不完整：\n${parsed.mismatches.join('\n')}`
@@ -92,11 +92,13 @@ export function Toolbar({
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     try {
-      if (looksLikeArchive(file)) {
-        await importArchiveFile(file);
+      // 只读一遍：先按字节认是不是备份包，认不出再当 JSON 解
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (looksLikeArchive(bytes)) {
+        await importArchiveFile(bytes);
         return;
       }
-      const parsed = parseBackup(JSON.parse(await file.text()));
+      const parsed = parseBackup(JSON.parse(new TextDecoder().decode(bytes)));
 
       if (parsed.type === 'graph') {
         await importGraph(parsed.data);

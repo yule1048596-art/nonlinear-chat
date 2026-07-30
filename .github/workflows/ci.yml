@@ -1,0 +1,68 @@
+name: CI
+
+# 部署工作流只在 push 到 main 时跑，也就是说改动**合进来之前**没有任何检查。
+# 这条补上 pull_request：想开始接受外部贡献，得先有一道人人都跑得到的关。
+# main 上的推送由 deploy.yml 跑同一套检查（它跑完才发布），这里排掉免得跑两遍
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一个分支上新的推送把旧的顶掉 —— 这里没有 Pages 发布那种「掐一半会卡住」
+# 的问题（见 deploy.yml 里的说明），纯粹是省 CI 时间
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 单元测试
+        run: npm test
+
+      - name: 构建
+        run: npm run build
+
+      # 浏览器有一百多兆，按 playwright 版本缓存，版本不变就不重下
+      - name: Playwright 版本
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: 装浏览器
+        run: npx playwright install --with-deps chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+      # 缓存命中时系统依赖仍然要装，浏览器本体不用
+      - name: 装浏览器的系统依赖
+        run: npx playwright install-deps chromium
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+
+      - name: 端到端测试
+        run: npm run test:e2e
+
+      # 挂了的时候光看断言消息猜不出现场，报告里有截图和 trace
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && failure() }}
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7

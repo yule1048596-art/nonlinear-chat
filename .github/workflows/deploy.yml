@@ -34,9 +34,38 @@ jobs:
       - run: npm ci
 
       # 测试挂了就别发出去
+      - run: npm run typecheck
       - run: npm test
 
       - run: npm run build
+
+      # 端到端也是「别发出去」的一部分：单元测试全在纯逻辑层，
+      # 跨 store / 防抖存盘 / React 生命周期的回归只有它拦得住
+      - name: Playwright 版本
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: 装浏览器
+        run: npx playwright install --with-deps chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+      - name: 装浏览器的系统依赖
+        run: npx playwright install-deps chromium
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+
+      - run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && failure() }}
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
 
       - uses: actions/configure-pages@v5
 

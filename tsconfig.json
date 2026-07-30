@@ -20,5 +20,5 @@
     "noFallthroughCasesInSwitch": true,
     "exactOptionalPropertyTypes": false
   },
-  "include": ["src"]
+  "include": ["src", "e2e", "playwright.config.ts"]
 }

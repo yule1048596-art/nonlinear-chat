@@ -153,9 +153,18 @@ export async function buildArchive(
   return { blob: new Blob([zipped as BlobPart], { type: 'application/zip' }), manifest };
 }
 
-/** 认出这是不是一个 v2 备份包。不是就交给旧的 JSON 那条路 */
-export function looksLikeArchive(file: { name: string }): boolean {
-  return /\.nexus\.zip$/i.test(file.name) || /\.zip$/i.test(file.name);
+/**
+ * 认出这是不是一个备份包 —— 看**头四个字节**，不看文件名。
+ *
+ * 按扩展名认会在两种很平常的情况下失灵：用户把文件改了名，或者某些
+ * 系统/浏览器在下载时把后缀吞掉。那时导入会走进 JSON 那条路、抛一个
+ * 「不是合法的 JSON」，而用户手里明明是一个好好的备份 —— 备份恢复
+ * 通常是最后一根救命稻草，不该败在文件名上。
+ *
+ * `PK\x03\x04` 是 zip 本地文件头的固定签名。
+ */
+export function looksLikeArchive(head: Uint8Array): boolean {
+  return head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
 }
 
 export async function readArchive(data: Uint8Array): Promise<ParsedArchive> {
