@@ -631,6 +631,9 @@ body.is-connecting .react-flow__node {
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
+  /* 操作条浮在底部（见 .node-actions），这里给它一个定位参照和一点落脚处 */
+  position: relative;
+  padding-bottom: 7px;
   box-shadow: var(--shadow-1);
   transition: opacity 0.2s var(--ease), filter 0.2s var(--ease), box-shadow 0.2s var(--ease),
     border-color 0.2s var(--ease);
@@ -835,11 +838,23 @@ body.is-connecting .react-flow__node {
   align-items: center;
   gap: 2px;
   /*
-   * 用 opacity 而不是 display:none —— 位置在画布上是有意义的，
-   * 悬停时卡片突然长高会把整条边都拽动一下。代价是底部常驻一条空带，
-   * 所以这里把预留高度压到刚好放下按钮。
+   * 浮在卡片底部，不占布局高度。
+   *
+   * 原来它是正常流里的一条常驻空带 —— 因为不能用 display:none：卡片
+   * 悬停时突然长高，底部那个连接点跟着上移，整条边都会被拽动一下。
+   * 但代价在短卡片上大得离谱：一个「你」卡片总高 102px，其中 35px 是
+   * 一条看不见的按钮带，三分之一的面积是空的，一屏问句看过去全是虚胖。
+   *
+   * 浮起来两头都占：高度从此和悬停无关（边不会抖），短卡片也不再虚胖。
+   * 压在正文最后一行上时，靠底下那层渐变把字垫住。
    */
-  padding: 3px 8px 5px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 8px 8px 5px;
+  border-radius: 0 0 var(--radius) 0;
+  background: linear-gradient(to top, var(--surface) 68%, transparent);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.16s var(--ease);

@@ -2,6 +2,7 @@ import { openDB, type IDBPDatabase } from 'idb';
 import type { Attachment, Graph, GraphMeta, KnowledgeChunk, KnowledgeFile, Settings } from '../types';
 import { toMeta, type Snapshot, type SnapshotMeta } from './snapshots';
 import { orphanAttachmentIds } from './attachments';
+import { DEMO_SEEDED_KEY } from './demo';
 
 const DB_NAME = 'nonlinear-chat';
 /** v2 加 snapshots，v3 加知识库两张表，v4 加附件表。升级只新建表，不动既有数据 */
@@ -92,6 +93,20 @@ export async function loadLastGraphId(): Promise<string | undefined> {
 
 export async function saveLastGraphId(id: string): Promise<void> {
   await (await db()).put(KV, id, 'lastGraphId');
+}
+
+/**
+ * 示例画布播过没有。
+ *
+ * 只看「库里有没有画布」是不够的：用户把示例删光、再把自己建的也删光，
+ * 下次打开示例就又冒出来了 —— 一个删不掉的东西比一个没用的东西更烦人。
+ */
+export async function loadDemoSeeded(): Promise<boolean> {
+  return (await (await db()).get(KV, DEMO_SEEDED_KEY)) === true;
+}
+
+export async function markDemoSeeded(): Promise<void> {
+  await (await db()).put(KV, true, DEMO_SEEDED_KEY);
 }
 
 /* ---------- 快照 ---------- */

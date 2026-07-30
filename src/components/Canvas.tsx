@@ -7,6 +7,7 @@ import {
   MiniMap,
   Panel,
   ReactFlow,
+  useNodesInitialized,
   useReactFlow,
   type Connection,
   type Edge,
@@ -36,8 +37,12 @@ const nodeTypes: NodeTypes = { message: MessageNode, map: MapNode };
 // 箭头做小：连线是背景信息，不该比节点还抢眼
 const EDGE_MARKER = { type: MarkerType.ArrowClosed, width: 11, height: 11 } as const;
 
+/** 少于这个数就不显示小地图 —— 一屏装得下的时候它只是块挡视线的东西 */
+const MINIMAP_FROM = 12;
+
 export function Canvas() {
   const nodes = useStore((s) => s.graph?.nodes);
+  const graphId = useStore((s) => s.graph?.id);
   const selectedId = useStore((s) => s.selectedId);
   const select = useStore((s) => s.select);
   const moveNode = useStore((s) => s.moveNode);
@@ -45,8 +50,10 @@ export function Canvas() {
   const unlinkNodes = useStore((s) => s.unlinkNodes);
   const addRootNode = useStore((s) => s.addRootNode);
   const viewMode = useStore((s) => s.viewMode);
+  const nodeCount = useStore((s) => Object.keys(s.graph?.nodes ?? {}).length);
 
   const { screenToFlowPosition, fitView } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
   const nodeCache = useRef(new Map<string, Node>());
   const edgeCache = useRef(new Map<string, Edge>());
 
@@ -70,8 +77,31 @@ export function Canvas() {
    * 拿旧尺寸（或者没尺寸）算出来的包围盒是错的，会一路怼到最大缩放。
    * 所以只挂一个「待 fit」标记，等下一次尺寸回传到了再真正执行。
    */
-  const firstRender = useRef(true);
   const pendingFit = useRef(false);
+
+  /**
+   * fitView，但要等到页面真的被看着的时候。
+   *
+   * 后台标签页里 `requestAnimationFrame` 一帧都不跑（实测 500ms 内 0 帧），
+   * 而 React Flow 的 fitView 是靠它推进的 —— 于是在后台加载的页面视口会
+   * 停在默认值。⌘ 点开一个链接晾在后台、过一会儿切过去，看到的就是没对准
+   * 的画面，而这恰好是「第一眼」。
+   *
+   * 在后台时对准也没意义，所以挂一次 visibilitychange，等人真的看过来再做。
+   */
+  const fitWhenVisible = useCallback(() => {
+    const run = () => void fitView({ duration: 360, padding: 0.12 });
+    if (!document.hidden) {
+      run();
+      return;
+    }
+    const onVisible = () => {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', onVisible);
+      run();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+  }, [fitView]);
 
   useEffect(() => {
     /*
@@ -81,16 +111,36 @@ export function Canvas() {
      */
     dimsRef.current.clear();
     setDimsVersion((v) => v + 1);
-    if (firstRender.current) {
-      firstRender.current = false;
-      return;
-    }
     if (viewMode === 'map') pendingFit.current = true;
   }, [viewMode]);
 
+  /*
+   * 打开一张画布就先看全貌。
+   *
+   * 之前是固定的 `defaultViewport`（0.8 倍、偏移 80/80），落点跟画布内容
+   * 毫无关系 —— 新访客看到的是一堆节点中的某一块，而这个应用要讲的话
+   * （两条分支汇成一个点）恰恰是**整张图的形状**，看不全就等于没讲。
+   *
+   * 视口本来就不落盘，没有「用户自己摆好的位置」会被这一下冲掉。
+   */
   useEffect(() => {
-    // size 为 0 说明这次是上面那个 clear 触发的，真正的尺寸还没量出来，再等一轮
-    if (!pendingFit.current || dimsRef.current.size === 0) return;
+    if (graphId) pendingFit.current = true;
+  }, [graphId]);
+
+  /*
+   * 两种「该 fit 了」的信号，一个出口。
+   *
+   * - `nodesInitialized`：React Flow 说所有节点都量过了。换画布走这条。
+   * - `dimsVersion`：我们自己收到的尺寸回传。切视图走这条 —— 那时节点
+   *   数量没变，`nodesInitialized` 一直是 true，不会再触发一次。
+   *
+   * 换画布**不能**靠 dimsVersion：清空 dimsRef 只是清了我们这份副本，
+   * React Flow 那边尺寸没变就不再回传，于是 size 永远是 0，fit 永远不发生。
+   */
+  useEffect(() => {
+    if (!pendingFit.current) return;
+    if (!nodesInitialized && dimsRef.current.size === 0) return;
+
     /*
      * React Flow 是一个节点一次回传尺寸的（实测 12 个节点会触发 12 次 onNodesChange），
      * 在第一次回传时就 fit，算出来的包围盒里只有一个节点，视口会被怼到最大缩放。
@@ -98,10 +148,10 @@ export function Canvas() {
      */
     const timer = setTimeout(() => {
       pendingFit.current = false;
-      void fitView({ duration: 360, padding: 0.12 });
+      fitWhenVisible();
     }, 120);
     return () => clearTimeout(timer);
-  }, [dimsVersion, fitView]);
+  }, [dimsVersion, nodesInitialized, graphId, fitWhenVisible]);
 
   /*
    * 图的「形状」签名：id + 角色 + 父节点 + 是否折叠子树。
@@ -506,14 +556,23 @@ export function Canvas() {
           </Panel>
         )}
         <Controls showInteractive={false} position="bottom-left" />
-        <MiniMap
-          pannable
-          zoomable
-          position="bottom-right"
-          nodeClassName={(n) => `mm-node mm-${nodes?.[n.id]?.role ?? 'user'}`}
-          nodeStrokeWidth={0}
-          nodeBorderRadius={3}
-        />
+        {/*
+          * 节点少的时候不要小地图。
+          *
+          * 它是给「一屏装不下」准备的；八个节点的画布上它既帮不上忙，又正好
+          * 压在右下角的内容上 —— 而新画布和示例画布恰恰都是这个规模，
+          * 于是最需要干净的那一眼被一块没用的东西挡着。
+          */}
+        {nodeCount > MINIMAP_FROM && (
+          <MiniMap
+            pannable
+            zoomable
+            position="bottom-right"
+            nodeClassName={(n) => `mm-node mm-${nodes?.[n.id]?.role ?? 'user'}`}
+            nodeStrokeWidth={0}
+            nodeBorderRadius={3}
+          />
+        )}
       </ReactFlow>
       <ContextMenu
         anchor={menu?.anchor ?? null}

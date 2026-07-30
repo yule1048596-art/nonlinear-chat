@@ -34,6 +34,7 @@ import { indexFile } from '../lib/indexer';
 import { parseFile } from '../lib/parsers';
 import { retrieve, type RetrievedChunk } from '../lib/knowledge';
 import { loadViewMode, saveViewMode, type ViewMode } from '../lib/view';
+import { demoGraph } from '../lib/demo';
 import { emptyHistory, record, redo as redoStep, undo as undoStep, type StepResult } from '../lib/history';
 import { LlmError, streamChat } from '../lib/llm';
 import { placeChild, placeSibling } from '../lib/layout';
@@ -686,10 +687,11 @@ export const useStore = create<State>((set, get) => {
     },
 
     async init() {
-      const [settings, lastId, graphs] = await Promise.all([
+      const [settings, lastId, graphs, demoSeeded] = await Promise.all([
         db.loadSettings(),
         db.loadLastGraphId(),
         db.listGraphs(),
+        db.loadDemoSeeded(),
       ]);
       // 老版本存的设置可能缺字段，跟默认值合一次
       const merged: Settings = { ...DEFAULT_SETTINGS, ...(settings ?? {}) };
@@ -699,8 +701,20 @@ export const useStore = create<State>((set, get) => {
       let graph = lastId ? await db.loadGraph(lastId) : undefined;
       if (!graph && graphs.length) graph = await db.loadGraph(graphs[0]!.id);
       if (!graph) {
-        graph = emptyGraph();
+        /*
+         * 真正的头一次：给一张预填好的示例画布，而不是一张空的。
+         *
+         * 这个应用最值钱的是「两条分支汇进同一个提问」，可它要发三四轮、
+         * 再手动拖一条边才看得见 —— 而且得先去申请一个 API Key。
+         * 于是最该被看到的东西恰好落在漏斗最深处。示例画布不需要 Key
+         * 就能读、能选中看上下文高亮。
+         *
+         * 只在**从没播过**时给。删光了再打开又冒出来的话，它就成了
+         * 一个删不掉的东西 —— 比一个没用的东西更烦人。
+         */
+        graph = demoSeeded ? emptyGraph() : demoGraph(uid, now());
         await db.saveGraph(graph);
+        if (!demoSeeded) await db.markDemoSeeded();
       }
       graph = sanitize(graph);
 

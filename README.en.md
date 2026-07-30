@@ -230,6 +230,7 @@ src/
 │   ├── view.ts           The three view modes, Q&A pairing rule (tested)
 │   ├── focus.ts          Focus-view card deck and mini graph (tested)
 │   ├── endpoint.ts       Loopback detection and mixed-content warnings (tested)
+│   ├── demo.ts           The sample canvas seeded on first launch (tested)
 │   ├── autoLayout.ts     dagre layered layout
 │   ├── layout.ts         Collision-avoiding placement for new nodes
 │   ├── theme.ts          Light/dark themes
@@ -254,7 +255,7 @@ src/
 npm test
 ```
 
-364 tests covering DAG topological ordering, multi-parent merging, diamond deduplication, cycle detection, context trimming, collapse-visibility propagation, undo-stack coalescing and limits, token estimation, search-excerpt offsets, debounced-save timing (including per-canvas slots), SSE stream parsing, snapshot dedup and pruning, backup merging, export key-stripping, archive pack/restore round-trips, attachment orphan detection, and path export.
+380 tests covering DAG topological ordering, multi-parent merging, diamond deduplication, cycle detection, context trimming, collapse-visibility propagation, undo-stack coalescing and limits, token estimation, search-excerpt offsets, debounced-save timing (including per-canvas slots), SSE stream parsing, snapshot dedup and pruning, backup merging, export key-stripping, archive pack/restore round-trips, attachment orphan detection, the demo canvas's graph shape, and path export.
 
 [`src/readme.test.ts`](src/readme.test.ts) watches the docs themselves: the test count and the "not done yet" list turn red the moment they drift from the code. A hand-synced number will always drift, so rather than re-checking it periodically, let it shout.
 
