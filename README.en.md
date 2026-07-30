@@ -236,7 +236,13 @@ src/
 │   ├── theme.ts          Light/dark themes
 │   ├── toast.ts          Module-level notifications
 │   └── download.ts       File download helper
-├── store/useStore.ts     zustand: graph mutations, streaming, undo, snapshots, backup
+├── store/                zustand, split by responsibility
+│   ├── core.ts           Shared write primitives: commit, undo stack, debounced save
+│   ├── graph.ts          Graph structure: nodes, edges, undo/redo, layout
+│   ├── generation.ts     Streaming generation and model profiles
+│   ├── storage.ts        Snapshots, backup import/export, attachment blobs
+│   ├── knowledge.ts      Knowledge-base indexing and retrieval
+│   └── useStore.ts       Assembly only (44 lines)
 └── components/
     ├── Canvas.tsx        React Flow integration, context highlighting, cycle checks, collapse
     ├── MessageNode.tsx   Node card

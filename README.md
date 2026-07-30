@@ -233,7 +233,13 @@ src/
 │   ├── theme.ts          亮暗主题
 │   ├── toast.ts          模块级提示
 │   └── download.ts       触发文件下载
-├── store/useStore.ts     zustand：图变更 + 流式生成 + 撤销 + 快照 + 备份
+├── store/                zustand，按职责切成四片
+│   ├── core.ts           共用的写入原语：commit、撤销栈、防抖存盘、后台画布
+│   ├── graph.ts          画布与节点结构：增删改、连断线、撤销重做、排版
+│   ├── generation.ts     流式生成与模型配置
+│   ├── storage.ts        快照、备份导入导出、附件二进制
+│   ├── knowledge.ts      知识库建索引与检索
+│   └── useStore.ts       只负责把四片拼起来（44 行）
 └── components/
     ├── Canvas.tsx        React Flow 集成、上下文高亮、连线校验、折叠
     ├── MessageNode.tsx   节点卡片

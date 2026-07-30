@@ -24,6 +24,20 @@ export class EmbeddingError extends Error {
   }
 }
 
+/**
+ * 把向量服务的错误摊成一句能直接显示给人看的话。
+ *
+ * EmbeddingError 的 hint 才是真正有用的那半句（「地址写成 127.0.0.1 了」
+ * 之类），丢了它用户只会看到一个「fetch failed」。建索引和检索两条路
+ * 都要用，所以放在这儿而不是各写一份。
+ */
+export function describeEmbeddingError(err: unknown): string {
+  if (err instanceof EmbeddingError) {
+    return err.hint ? `${err.message}\n\n${err.hint}` : err.message;
+  }
+  return (err as Error)?.message ?? String(err);
+}
+
 function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.trim().replace(/\/+$/, '')}${path}`;
 }
