@@ -23,13 +23,17 @@ test.describe('停止与重生', () => {
    * 用户主动按停止时，他要的就是已经生成的那一段。
    */
   test('停止：留下已经生成的部分，状态回到 idle', async ({ page }) => {
-    await seedApp(page, { model: 'mock-slow', graphs: [oneTurn()] });
+    await seedApp(page, { model: 'mock-crawl', graphs: [oneTurn()] });
 
     await (await nodeAction(nodeCard(page, '这一轮的问题'), '发送')).click();
     await waitForStreaming(page);
 
     const answer = nodeCard(page, 'AI');
-    await (await nodeAction(answer, '停止')).click();
+    const stop = await nodeAction(answer, '停止');
+    // 按不到就说明流已经跑完了，那这条用例什么也没验到 —— 与其静默通过，
+    // 不如在这里明说：窗口太窄了，去调 mock-crawl 的间隔
+    await expect(stop, '还没来得及按「停止」，这一发就跑完了').toBeVisible();
+    await stop.click();
     await waitForIdle(page, 'g1');
 
     const graph = await readGraph(page, 'g1');

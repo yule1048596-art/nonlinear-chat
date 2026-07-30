@@ -12,7 +12,7 @@ import { expect, type Locator, type Page } from '@playwright/test';
 export const MOCK_BASE_URL = 'http://localhost:8787/v1';
 
 /** 出片速度由模型名决定，见 scripts/mock-server.mjs */
-export type MockModel = 'mock-fast' | 'mock-slow';
+export type MockModel = 'mock-fast' | 'mock-slow' | 'mock-crawl';
 
 export interface SeedNode {
   id: string;

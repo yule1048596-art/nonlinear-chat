@@ -23,7 +23,14 @@ const DELAY = Number(process.env.MOCK_DELAY_MS ?? 12);
  *
  * `mock-fast` 用于「只关心结果」的用例，`mock-slow` 用于要在流式中途下手的。
  */
-const MODEL_DELAY = { 'mock-fast': 0, 'mock-slow': 200, 'mock-smart': DELAY };
+const MODEL_DELAY = {
+  'mock-fast': 0,
+  'mock-slow': 200,
+  // 要在流式中途下手的用例（按「停止」）。200ms 一片时整段只有不到两秒，
+  // CI 上光是定位加悬停就可能把窗口用完 —— 那条用例因此 flaky 过一次
+  'mock-crawl': 700,
+  'mock-smart': DELAY,
+};
 const delayFor = (model) => MODEL_DELAY[model] ?? DELAY;
 
 const CORS = {
